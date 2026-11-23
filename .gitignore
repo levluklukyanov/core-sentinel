@@ -1,0 +1,21 @@
+# Build outputs
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+*.msi
+!clean.bat
+
+# Visual Studio / IDE cache
+.vs/
+*.user
+*.suo
+*.userprefs
+*.ide
+*.swp
+
+# OS temporary files
+Thumbs.db
+Desktop.ini
+.DS_Store

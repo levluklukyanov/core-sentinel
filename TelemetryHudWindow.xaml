@@ -1,0 +1,86 @@
+﻿<Window x:Class="CoreSentinel.TelemetryHudWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CoreSentinel HUD" 
+        Height="38" Width="360"
+        WindowStyle="None" 
+        AllowsTransparency="True" 
+        Background="Transparent"
+        Topmost="True" 
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        WindowStartupLocation="Manual"
+        Left="20" Top="20"
+        FontFamily="{DynamicResource FontMain}"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Ideal"
+        TextOptions.TextRenderingMode="ClearType"
+        RenderOptions.ClearTypeHint="Enabled">
+
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/AppTheme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Border Background="#EB131315" 
+            BorderBrush="{StaticResource BrushBorderCard}" 
+            BorderThickness="1" 
+            CornerRadius="7" 
+            MouseLeftButtonDown="Border_MouseLeftButtonDown"
+            SnapsToDevicePixels="True">
+        <Grid Margin="12,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Brand Status Indicator -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <Ellipse x:Name="HudStatusDot" Width="6" Height="6" Fill="{StaticResource BrushTextMuted}" Margin="0,0,7,0"/>
+                <TextBlock Text="SENTINEL" 
+                           FontFamily="{DynamicResource FontMain}" 
+                           FontSize="10" 
+                           FontWeight="SemiBold" 
+                           Foreground="{StaticResource BrushTextMuted}" 
+                           VerticalAlignment="Center"/>
+            </StackPanel>
+
+            <!-- Live Metrics -->
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <!-- CPU -->
+                <TextBlock Text="CPU " FontSize="10.5" Foreground="{StaticResource BrushTextMuted}" FontFamily="{DynamicResource FontMain}" VerticalAlignment="Center"/>
+                <TextBlock x:Name="HudCpuText" Text="0%" FontSize="11.5" FontWeight="SemiBold" Foreground="{StaticResource BrushTextPrimary}" FontFamily="{DynamicResource FontMain}" Margin="0,0,12,0" VerticalAlignment="Center"/>
+
+                <!-- RAM -->
+                <TextBlock Text="RAM " FontSize="10.5" Foreground="{StaticResource BrushTextMuted}" FontFamily="{DynamicResource FontMain}" VerticalAlignment="Center"/>
+                <TextBlock x:Name="HudRamText" Text="0%" FontSize="11.5" FontWeight="SemiBold" Foreground="{StaticResource BrushTextPrimary}" FontFamily="{DynamicResource FontMain}" Margin="0,0,12,0" VerticalAlignment="Center"/>
+
+                <!-- Storage -->
+                <TextBlock x:Name="HudDiskLabel" Text="C: " FontSize="10.5" Foreground="{StaticResource BrushTextMuted}" FontFamily="{DynamicResource FontMain}" VerticalAlignment="Center"/>
+                <TextBlock x:Name="HudDiskText" Text="0G" FontSize="11.5" FontWeight="SemiBold" Foreground="{StaticResource BrushTextPrimary}" FontFamily="{DynamicResource FontMain}" VerticalAlignment="Center"/>
+            </StackPanel>
+
+            <!-- Controls (Click-through / Close) -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="BtnLockHud" 
+                        Style="{StaticResource BtnHudControl}"
+                        ToolTip="Р РµР¶РёРј Click-Through (РєР»РёРєРё РїСЂРѕС…РѕРґСЏС‚ РЅР°СЃРєРІРѕР·СЊ РІ РёРіСЂС‹)"
+                        Click="BtnLockHud_Click" 
+                        Margin="0,0,4,0">
+                    <Path x:Name="HudLockIcon" Data="{StaticResource IconLockOpen}" Width="10" Height="10" Fill="{StaticResource BrushTextMuted}" Stretch="Uniform" VerticalAlignment="Center"/>
+                </Button>
+                <Button Style="{StaticResource BtnHudControl}"
+                        ToolTip="Р—Р°РєСЂС‹С‚СЊ HUD"
+                        Click="BtnClose_Click">
+                    <Path Data="{StaticResource IconClose}" Width="8" Height="8" Fill="{StaticResource BrushTextMuted}" Stretch="Uniform" VerticalAlignment="Center"/>
+                </Button>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>
+
