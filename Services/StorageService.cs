@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
 
 namespace CoreSentinel.Services;
 
@@ -35,6 +37,54 @@ public record LargeDirectory(
 
 public static class StorageService
 {
+    [DllImport("Shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint SHEmptyRecycleBin(IntPtr hwnd, string? pszRootPath, uint dwFlags);
+
+    private const uint SHERB_NOCONFIRMATION = 0x00000001;
+    private const uint SHERB_NOPROGRESSUI   = 0x00000002;
+    private const uint SHERB_NOSOUND        = 0x00000004;
+
+    public static bool IsAdministrator()
+    {
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            var principal = new WindowsPrincipal(identity);
+            return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public static bool IsFileLocked(FileInfo file)
+    {
+        try
+        {
+            var access = (file.Attributes & FileAttributes.ReadOnly) != 0 ? FileAccess.Read : FileAccess.ReadWrite;
+            using var stream = file.Open(FileMode.Open, access, FileShare.Delete);
+            return false;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    public static bool CanCleanFile(FileInfo file, bool isAdmin)
+    {
+        // Live CBS.log is locked by Windows TrustedInstaller and can NEVER be deleted while OS is running
+        if (string.Equals(file.Name, "CBS.log", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // System directories require administrative privileges
+        if (!isAdmin && file.FullName.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return !IsFileLocked(file);
+    }
+
     public static DiskInfo? GetDriveInfo(string driveLetter = "C")
     {
         try
@@ -70,37 +120,48 @@ public static class StorageService
     public static List<CleanableTarget> ScanTempLocations(bool isEn = true)
     {
         var targets = new List<CleanableTarget>();
+        bool isAdmin = IsAdministrator();
 
         // 1. User Temp (%TEMP%)
         string userTemp = Path.GetTempPath();
         if (Directory.Exists(userTemp))
         {
-            var (bytes, count) = GetDirectorySizeSafe(userTemp);
-            targets.Add(new CleanableTarget(isEn ? "User Temporary Files (%TEMP%)" : "Пользовательский кэш (%TEMP%)", userTemp, bytes, count));
+            var (bytes, count) = GetDirectorySizeSafe(userTemp, cleanableOnly: true);
+            string name = isEn ? "User Temporary Files (%TEMP%)" : "Пользовательский кэш (%TEMP%)";
+            targets.Add(new CleanableTarget(name, userTemp, bytes, count));
         }
 
         // 2. Windows Temp
         string winTemp = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp");
         if (Directory.Exists(winTemp))
         {
-            var (bytes, count) = GetDirectorySizeSafe(winTemp);
-            targets.Add(new CleanableTarget(isEn ? "Windows System Temp Cache" : "Системный кэш Windows Temp", winTemp, bytes, count));
+            var (bytes, count) = GetDirectorySizeSafe(winTemp, cleanableOnly: true);
+            string name = isEn 
+                ? (isAdmin ? "Windows System Temp Cache" : "Windows System Temp (Admin Required)")
+                : (isAdmin ? "Системный кэш Windows Temp" : "Системный кэш Windows Temp (Нужны права админа)");
+            targets.Add(new CleanableTarget(name, winTemp, bytes, count));
         }
 
-        // 3. Windows Update Download Cache (clean.bat step 2)
+        // 3. Windows Update Download Cache
         string swDist = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "Download");
         if (Directory.Exists(swDist))
         {
-            var (bytes, count) = GetDirectorySizeSafe(swDist);
-            targets.Add(new CleanableTarget(isEn ? "Windows Update Download Cache" : "Кэш обновлений Windows (SoftwareDistribution)", swDist, bytes, count));
+            var (bytes, count) = GetDirectorySizeSafe(swDist, cleanableOnly: true);
+            string name = isEn 
+                ? (isAdmin ? "Windows Update Download Cache" : "Windows Update Cache (Admin Required)")
+                : (isAdmin ? "Кэш обновлений Windows (SoftwareDistribution)" : "Кэш обновлений Windows (Нужны права админа)");
+            targets.Add(new CleanableTarget(name, swDist, bytes, count));
         }
 
-        // 4. Delivery Optimization Cache (clean.bat step 2)
+        // 4. Delivery Optimization Cache
         string delivOpt = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "DeliveryOptimization");
         if (Directory.Exists(delivOpt))
         {
-            var (bytes, count) = GetDirectorySizeSafe(delivOpt);
-            targets.Add(new CleanableTarget(isEn ? "Delivery Optimization Peer Cache" : "Кэш доставки обновлений (DeliveryOptimization)", delivOpt, bytes, count));
+            var (bytes, count) = GetDirectorySizeSafe(delivOpt, cleanableOnly: true);
+            string name = isEn 
+                ? (isAdmin ? "Delivery Optimization Peer Cache" : "Delivery Optimization (Admin Required)")
+                : (isAdmin ? "Кэш доставки обновлений (DeliveryOptimization)" : "Кэш доставки обновлений (Нужны права админа)");
+            targets.Add(new CleanableTarget(name, delivOpt, bytes, count));
         }
 
         // 5. Crash Dumps
@@ -108,7 +169,7 @@ public static class StorageService
         string crashDumps = Path.Combine(localAppData, "CrashDumps");
         if (Directory.Exists(crashDumps))
         {
-            var (bytes, count) = GetDirectorySizeSafe(crashDumps);
+            var (bytes, count) = GetDirectorySizeSafe(crashDumps, cleanableOnly: true);
             targets.Add(new CleanableTarget(isEn ? "System Crash Dumps (CrashDumps)" : "Дампы системных сбоев (CrashDumps)", crashDumps, bytes, count));
         }
 
@@ -116,19 +177,22 @@ public static class StorageService
         string wer = Path.Combine(localAppData, "Microsoft", "Windows", "WER", "ReportArchive");
         if (Directory.Exists(wer))
         {
-            var (bytes, count) = GetDirectorySizeSafe(wer);
+            var (bytes, count) = GetDirectorySizeSafe(wer, cleanableOnly: true);
             targets.Add(new CleanableTarget(isEn ? "Error Reporting Archive (WER)" : "Архив отчетов об ошибках (WER)", wer, bytes, count));
         }
 
-        // 7. System Diagnostic Logs (clean.bat step 3)
+        // 7. System Diagnostic Logs (CBS - live CBS.log excluded)
         string cbsLogs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Logs", "CBS");
         if (Directory.Exists(cbsLogs))
         {
-            var (bytes, count) = GetDirectorySizeSafe(cbsLogs);
-            targets.Add(new CleanableTarget(isEn ? "Windows CBS & Diagnostic Logs" : "Системные логи Windows (CBS / Logs)", cbsLogs, bytes, count));
+            var (bytes, count) = GetDirectorySizeSafe(cbsLogs, cleanableOnly: true);
+            string name = isEn 
+                ? (isAdmin ? "Windows CBS & Diagnostic Logs" : "Windows CBS Logs (Admin Required)")
+                : (isAdmin ? "Системные логи Windows (CBS / Logs)" : "Системные логи Windows (Нужны права админа)");
+            targets.Add(new CleanableTarget(name, cbsLogs, bytes, count));
         }
 
-        // 8. Recycle Bin (clean.bat step 5)
+        // 8. Recycle Bin
         long binBytes = 0;
         int binCount = 0;
         foreach (var drive in DriveInfo.GetDrives().Where(d => d.IsReady))
@@ -138,7 +202,7 @@ public static class StorageService
                 string rbPath = Path.Combine(drive.RootDirectory.FullName, "$Recycle.Bin");
                 if (Directory.Exists(rbPath))
                 {
-                    var (b, c) = GetDirectorySizeSafe(rbPath);
+                    var (b, c) = GetDirectorySizeSafe(rbPath, cleanableOnly: true);
                     binBytes += b;
                     binCount += c;
                 }
@@ -168,6 +232,19 @@ public static class StorageService
             {
                 try
                 {
+                    // Live CBS.log is locked by Windows TrustedInstaller and can never be deleted while running
+                    if (string.Equals(file.Name, "CBS.log", StringComparison.OrdinalIgnoreCase))
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    // Remove ReadOnly attribute if set
+                    if ((file.Attributes & FileAttributes.ReadOnly) != 0)
+                    {
+                        file.Attributes &= ~FileAttributes.ReadOnly;
+                    }
+
                     long sz = file.Length;
                     file.Delete();
                     freed += sz;
@@ -198,11 +275,12 @@ public static class StorageService
         long totalFreed = 0;
         int totalRemoved = 0;
         int totalSkipped = 0;
+        bool isAdmin = IsAdministrator();
 
         // Stage 1: Temp Folders
         logCallback(isEn 
-            ? "[1/6] Cleaning temporary folders (%TEMP% and Windows Temp)..." 
-            : "[1/6] Очистка временных папок (%TEMP% и Windows Temp)...");
+            ? "[1/5] Cleaning temporary folders (%TEMP% and Windows Temp)..." 
+            : "[1/5] Очистка временных папок (%TEMP% и Windows Temp)...");
 
         string userTemp = Path.GetTempPath();
         var r1 = CleanDirectoryContents(userTemp);
@@ -213,22 +291,49 @@ public static class StorageService
         totalSkipped += r1.FilesSkipped + r2.FilesSkipped;
 
         // Stage 2: Windows Update & Delivery Optimization
-        logCallback(isEn 
-            ? "[2/6] Cleaning Windows Update and Delivery Optimization caches..." 
-            : "[2/6] Очистка кэша обновлений Windows и Delivery Optimization...");
-
         string swDist = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "Download");
-        var r3 = CleanDirectoryContents(swDist);
         string delivOpt = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "DeliveryOptimization");
-        var r4 = CleanDirectoryContents(delivOpt);
-        totalFreed += r3.BytesFreed + r4.BytesFreed;
-        totalRemoved += r3.FilesRemoved + r4.FilesRemoved;
-        totalSkipped += r3.FilesSkipped + r4.FilesSkipped;
 
-        // Stage 3: Error Reports and Logs
+        if (isAdmin)
+        {
+            logCallback(isEn 
+                ? "[2/5] Cleaning Windows Update and Delivery Optimization caches..." 
+                : "[2/5] Очистка кэша обновлений Windows и Delivery Optimization...");
+
+            // Temporarily unhook Windows Update service to release file locks on downloaded updates
+            try
+            {
+                var psiStop = new ProcessStartInfo("net.exe", "stop wuauserv") { CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden };
+                using var pStop = Process.Start(psiStop);
+                pStop?.WaitForExit(3000);
+            }
+            catch { }
+
+            var r3 = CleanDirectoryContents(swDist);
+            var r4 = CleanDirectoryContents(delivOpt);
+            totalFreed += r3.BytesFreed + r4.BytesFreed;
+            totalRemoved += r3.FilesRemoved + r4.FilesRemoved;
+            totalSkipped += r3.FilesSkipped + r4.FilesSkipped;
+
+            try
+            {
+                var psiStart = new ProcessStartInfo("net.exe", "start wuauserv") { CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden };
+                using var pStart = Process.Start(psiStart);
+                pStart?.WaitForExit(3000);
+            }
+            catch { }
+        }
+        else
+        {
+            logCallback(isEn 
+                ? "[2/5] Windows Update cache requires Administrator privileges (skipped)." 
+                : "[2/5] Кэш обновлений Windows требует прав Администратора (пропущено).");
+        }
+
+        // Stage 3: Error Reports and Diagnostic Logs (excluding active CBS.log)
         logCallback(isEn 
-            ? "[3/6] Clearing error reports and system diagnostic logs..." 
-            : "[3/6] Очистка системных отчетов об ошибках и логов...");
+            ? "[3/5] Clearing error reports and system diagnostic logs..." 
+            : "[3/5] Очистка отчетов об ошибках и логов...");
 
         string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         string progData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
@@ -240,11 +345,12 @@ public static class StorageService
         var r10 = CleanDirectoryContents(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Logs", "CBS"));
         totalFreed += r5.BytesFreed + r6.BytesFreed + r7.BytesFreed + r8.BytesFreed + r9.BytesFreed + r10.BytesFreed;
         totalRemoved += r5.FilesRemoved + r6.FilesRemoved + r7.FilesRemoved + r8.FilesRemoved + r9.FilesRemoved + r10.FilesRemoved;
+        totalSkipped += r5.FilesSkipped + r6.FilesSkipped + r7.FilesSkipped + r8.FilesSkipped + r9.FilesSkipped + r10.FilesSkipped;
 
         // Stage 4: DNS Cache Flush
         logCallback(isEn 
-            ? "[4/6] Flushing network DNS resolver cache..." 
-            : "[4/6] Сброс сетевого DNS-кэша...");
+            ? "[4/5] Flushing network DNS resolver cache..." 
+            : "[4/5] Сброс сетевого DNS-кэша...");
 
         try
         {
@@ -260,64 +366,39 @@ public static class StorageService
         }
         catch { }
 
-        // Stage 5: Empty Recycle Bin
+        // Stage 5: Empty Recycle Bin via native Shell32 API (instant, no powershell overhead)
         logCallback(isEn 
-            ? "[5/6] Emptying Windows Recycle Bin across all drives..." 
-            : "[5/6] Очистка Корзины на всех накопителях...");
+            ? "[5/5] Emptying Windows Recycle Bin across all drives..." 
+            : "[5/5] Очистка Корзины на всех накопителях...");
 
         try
         {
-            string psPath = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
-            var psi = new ProcessStartInfo(psPath, "-NoProfile -NonInteractive -Command \"Clear-RecycleBin -Confirm:$false -ErrorAction SilentlyContinue\"")
-            {
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
-            using var p = Process.Start(psi);
-            if (p != null) await p.WaitForExitAsync();
+            SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
         }
-        catch { }
-
-        // Stage 6: Component Store Cleanup (DISM)
-        logCallback(isEn 
-            ? "[6/6] Optimizing Windows Component Store (DISM)..." 
-            : "[6/6] Оптимизация базы компонентов (DISM)...");
-
-        try
+        catch
         {
-            string dismPath = Path.Combine(Environment.SystemDirectory, "dism.exe");
-            if (File.Exists(dismPath))
+            try
             {
-                var psi = new ProcessStartInfo(dismPath, "/online /cleanup-image /startcomponentcleanup")
+                string psPath = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+                var psi = new ProcessStartInfo(psPath, "-NoProfile -NonInteractive -Command \"Clear-RecycleBin -Confirm:$false -ErrorAction SilentlyContinue\"")
                 {
                     CreateNoWindow = true,
                     UseShellExecute = false,
                     WindowStyle = ProcessWindowStyle.Hidden
                 };
                 using var p = Process.Start(psi);
-                if (p != null)
-                {
-                    using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
-                    try
-                    {
-                        await p.WaitForExitAsync(cts.Token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        try { p.Kill(true); } catch { }
-                        logCallback(isEn 
-                            ? "[6/6] DISM component cleanup timed out (skipped safely)." 
-                            : "[6/6] Очистка базы компонентов DISM превысила таймаут (пропущено).");
-                    }
-                }
+                if (p != null) await p.WaitForExitAsync();
             }
+            catch { }
         }
-        catch { }
+
+        string skippedDetail = totalSkipped > 0
+            ? (isEn ? $" (skipped {totalSkipped} locked/in-use files)" : $" (пропущено {totalSkipped} файлов, занятых системой)")
+            : "";
 
         logCallback(isEn 
-            ? $"System cleanup completed! Freed: {FormatBytes(totalFreed)}." 
-            : $"Очистка завершена! Освобождено: {FormatBytes(totalFreed)}.");
+            ? $"System cleanup completed! Freed: {FormatBytes(totalFreed)}{skippedDetail}." 
+            : $"Очистка завершена! Освобождено: {FormatBytes(totalFreed)}{skippedDetail}.");
 
         return new CleanResult(totalFreed, totalRemoved, totalSkipped);
     }
@@ -362,10 +443,19 @@ public static class StorageService
     public static List<LargeDirectory> ScanLargeDirectoriesOnC(int maxResults = 8) =>
         ScanLargeDirectories(null, maxResults);
 
-    private static (long totalBytes, int fileCount) GetDirectorySizeSafe(string path)
+    private static (long totalBytes, int fileCount) GetDirectorySizeSafe(string path, bool cleanableOnly = true)
     {
         long total = 0;
         int count = 0;
+
+        if (!Directory.Exists(path)) return (0, 0);
+
+        bool isAdmin = IsAdministrator();
+        bool isWinDir = path.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows), StringComparison.OrdinalIgnoreCase);
+
+        // If it's a Windows system directory and user is not admin, files cannot be cleaned
+        if (isWinDir && !isAdmin)
+            return (0, 0);
 
         try
         {
@@ -374,12 +464,15 @@ public static class StorageService
             {
                 try
                 {
+                    if (cleanableOnly && !CanCleanFile(file, isAdmin))
+                        continue;
+
                     total += file.Length;
                     count++;
                 }
                 catch
                 {
-                    // Skip individual file error
+                    // Skip inaccessible individual file
                 }
             }
         }

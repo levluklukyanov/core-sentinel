@@ -23,6 +23,13 @@ public partial class MainWindow : Window
     private bool _isCpuPurgeMode = false;
     private bool _includeLaunchers = false;
 
+    // Storage & Purge Cooldown & Re-entrancy guards
+    private bool _isStorageOperationRunning = false;
+    private DispatcherTimer? _storageCooldownTimer;
+    private int _storageCooldownRemaining = 0;
+    private DispatcherTimer? _ramCooldownTimer;
+    private int _ramCooldownRemaining = 0;
+
     // Configuration state & Persistent user settings
     private UserSettingsModel _settings = new();
     private string _watchedDriveLetter = HardwareTelemetry.GetSystemDriveLetter();
@@ -201,7 +208,7 @@ public partial class MainWindow : Window
         if (DashDiskCTitle != null) DashDiskCTitle.Text = isEn ? $"STORAGE ({letter}:)" : $"НАКОПИТЕЛЬ ({letter}:)";
         if (StorageGaugeTitle != null) StorageGaugeTitle.Text = isEn ? $"Drive Capacity ({letter}:):" : $"Емкость накопителя ({letter}:):";
         UpdateTelemetry();
-        ScanJunkInternal();
+        _ = ScanJunkAsync(showLog: false);
         SaveCurrentUserSettings();
     }
 
@@ -1056,6 +1063,8 @@ public partial class MainWindow : Window
 
     private void ExecuteRamPurge()
     {
+        if (_ramCooldownRemaining > 0) return;
+
         bool isEn = _currentLanguage == "EN";
 
         BtnFullPurge.IsEnabled = false;
@@ -1079,13 +1088,15 @@ public partial class MainWindow : Window
         }
         finally
         {
-            BtnFullPurge.IsEnabled = true;
             UpdateTelemetry();
+            StartRamCooldown(3);
         }
     }
 
     private async void ExecuteCpuOptimization()
     {
+        if (_ramCooldownRemaining > 0) return;
+
         bool isEn = _currentLanguage == "EN";
         BtnFullPurge.IsEnabled = false;
         StatusFooterText.Text = isEn ? "Optimizing CPU thread scheduling and background load..." : "Оптимизация очередей ЦП и фоновой нагрузки...";
@@ -1142,9 +1153,44 @@ public partial class MainWindow : Window
         }
         finally
         {
-            BtnFullPurge.IsEnabled = true;
             UpdateTelemetry();
+            StartRamCooldown(3);
         }
+    }
+
+    private void StartRamCooldown(int seconds)
+    {
+        bool isEn = _currentLanguage == "EN";
+        _ramCooldownRemaining = seconds;
+
+        if (BtnFullPurge != null) BtnFullPurge.IsEnabled = false;
+
+        if (BtnFullPurgeText != null)
+        {
+            BtnFullPurgeText.Text = isEn ? $"Cooldown ({_ramCooldownRemaining}s)" : $"Ожидание ({_ramCooldownRemaining}с)...";
+        }
+
+        _ramCooldownTimer?.Stop();
+        _ramCooldownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _ramCooldownTimer.Tick += (s, ev) =>
+        {
+            _ramCooldownRemaining--;
+            if (_ramCooldownRemaining > 0)
+            {
+                if (BtnFullPurgeText != null)
+                {
+                    BtnFullPurgeText.Text = isEn ? $"Cooldown ({_ramCooldownRemaining}s)" : $"Ожидание ({_ramCooldownRemaining}с)...";
+                }
+            }
+            else
+            {
+                _ramCooldownTimer?.Stop();
+                _ramCooldownRemaining = 0;
+                if (BtnFullPurge != null) BtnFullPurge.IsEnabled = true;
+                UpdatePurgeTabVisuals();
+            }
+        };
+        _ramCooldownTimer.Start();
     }
 
     private void BtnSwitchPurgeMode_Click(object sender, RoutedEventArgs e)
@@ -1453,12 +1499,12 @@ public partial class MainWindow : Window
 
     private void InitStorageTab()
     {
-        ScanJunkInternal();
+        _ = ScanJunkAsync(showLog: false);
     }
 
-    private void BtnScanJunk_Click(object sender, RoutedEventArgs e)
+    private async void BtnScanJunk_Click(object sender, RoutedEventArgs e)
     {
-        ScanJunkInternal();
+        await ScanJunkAsync(showLog: true, isManualClick: true);
     }
 
     private void LogStorage(string msg)
@@ -1487,47 +1533,81 @@ public partial class MainWindow : Window
         if (StorageLogFooter != null) StorageLogFooter.Text = _currentLanguage == "EN" ? "Console cleared" : "Консоль очищена";
     }
 
-    private void ScanJunkInternal()
+    private async Task ScanJunkAsync(bool showLog = true, bool isManualClick = false)
     {
+        if (_isStorageOperationRunning) return;
+        if (isManualClick && _storageCooldownRemaining > 0) return;
+
         bool isEn = _currentLanguage == "EN";
 
+        if (BtnScanJunk != null) BtnScanJunk.IsEnabled = false;
+        if (BtnCleanSystem != null && _storageCooldownRemaining <= 0) BtnCleanSystem.IsEnabled = false;
 
-        LogStorage(isEn ? "--> Starting scan for cleanable cache targets..." : "--> Сканирование безопасных целей очистки...");
-        StatusFooterText.Text = isEn ? "Scanning temporary junk files..." : "Сканирование временных файлов...";
-        
-        var targets = StorageService.ScanTempLocations(isEn);
-
-        var displayItems = targets.Select(t => new CleanTargetItem(
-            t.Name,
-            t.Path,
-            StorageService.FormatBytes(t.Bytes),
-            t.Bytes
-        )).ToList();
-
-        CleanTargetsList.ItemsSource = displayItems;
-        long totalBytes = targets.Sum(t => t.Bytes);
-
-        foreach (var t in targets)
+        if (showLog)
         {
-            if (t.Bytes > 0)
+            LogStorage(isEn ? "--> Starting scan for cleanable cache targets..." : "--> Сканирование безопасных целей очистки...");
+        }
+        StatusFooterText.Text = isEn ? "Scanning temporary junk files..." : "Сканирование временных файлов...";
+
+        try
+        {
+            var targets = await Task.Run(() => StorageService.ScanTempLocations(isEn));
+
+            var displayItems = targets.Select(t => new CleanTargetItem(
+                t.Name,
+                t.Path,
+                StorageService.FormatBytes(t.Bytes),
+                t.Bytes
+            )).ToList();
+
+            CleanTargetsList.ItemsSource = displayItems;
+            long totalBytes = targets.Sum(t => t.Bytes);
+
+            if (showLog)
             {
-                LogStorage($"    • {t.Name}: {StorageService.FormatBytes(t.Bytes)}");
+                foreach (var t in targets)
+                {
+                    if (t.Bytes > 0)
+                    {
+                        LogStorage($"    • {t.Name}: {StorageService.FormatBytes(t.Bytes)}");
+                    }
+                }
+
+                string summary = isEn
+                    ? $"[OK] Scan finished. Total reclaimable: {StorageService.FormatBytes(totalBytes)} ({targets.Count} locations)."
+                    : $"[OK] Сканирование завершено. Доступно для очистки: {StorageService.FormatBytes(totalBytes)} ({targets.Count} расположений).";
+                LogStorage(summary);
+                StatusFooterText.Text = summary;
             }
         }
-
-        string summary = isEn
-            ? $"[OK] Scan finished. Total reclaimable: {StorageService.FormatBytes(totalBytes)} ({targets.Count} locations)."
-            : $"[OK] Сканирование завершено. Доступно для очистки: {StorageService.FormatBytes(totalBytes)} ({targets.Count} расположений).";
-        LogStorage(summary);
-        StatusFooterText.Text = summary;
+        catch (Exception ex)
+        {
+            LogStorage($"[ERROR] Scan error: {ex.Message}");
+        }
+        finally
+        {
+            if (_storageCooldownRemaining <= 0)
+            {
+                if (BtnScanJunk != null) BtnScanJunk.IsEnabled = true;
+                if (BtnCleanSystem != null) BtnCleanSystem.IsEnabled = true;
+            }
+        }
     }
 
     private async void BtnCleanSystem_Click(object sender, RoutedEventArgs e)
     {
+        if (_isStorageOperationRunning || _storageCooldownRemaining > 0) return;
+
         bool isEn = _currentLanguage == "EN";
+        _isStorageOperationRunning = true;
 
+        if (BtnCleanSystem != null) BtnCleanSystem.IsEnabled = false;
+        if (BtnScanJunk != null) BtnScanJunk.IsEnabled = false;
 
-        BtnCleanSystem.IsEnabled = false;
+        if (BtnCleanSystemText != null)
+        {
+            BtnCleanSystemText.Text = isEn ? "Cleaning..." : "Очистка...";
+        }
 
         LogStorage(isEn ? "====== SYSTEM CACHE CLEANUP INITIATED ======" : "====== ЗАПУСК ОЧИСТКИ СИСТЕМНОГО КЭША ======");
         StatusFooterText.Text = isEn ? "Starting system cleanup..." : "Запуск системной очистки...";
@@ -1544,7 +1624,8 @@ public partial class MainWindow : Window
                 ? $"[SUCCESS] Cleanup completed. Total reclaimed: {StorageService.FormatBytes(res.BytesFreed)} in {res.FilesRemoved} files."
                 : $"[УСПЕХ] Очистка завершена. Освобождено: {StorageService.FormatBytes(res.BytesFreed)} в {res.FilesRemoved} файлах.");
 
-            ScanJunkInternal();
+            // Asynchronous non-blocking re-scan
+            await ScanJunkAsync(showLog: false);
             UpdateTelemetry();
         }
         catch (Exception ex)
@@ -1554,8 +1635,56 @@ public partial class MainWindow : Window
         }
         finally
         {
-            BtnCleanSystem.IsEnabled = true;
+            _isStorageOperationRunning = false;
+            StartStorageCooldown(5);
         }
+    }
+
+    private void StartStorageCooldown(int seconds)
+    {
+        bool isEn = _currentLanguage == "EN";
+        _storageCooldownRemaining = seconds;
+
+        if (BtnCleanSystem != null) BtnCleanSystem.IsEnabled = false;
+        if (BtnScanJunk != null) BtnScanJunk.IsEnabled = false;
+
+        if (BtnCleanSystemText != null)
+        {
+            BtnCleanSystemText.Text = isEn ? $"Cooldown ({_storageCooldownRemaining}s)" : $"Ожидание ({_storageCooldownRemaining}с)...";
+        }
+
+        _storageCooldownTimer?.Stop();
+        _storageCooldownTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(1)
+        };
+        _storageCooldownTimer.Tick += (s, ev) =>
+        {
+            _storageCooldownRemaining--;
+            if (_storageCooldownRemaining > 0)
+            {
+                if (BtnCleanSystemText != null)
+                {
+                    BtnCleanSystemText.Text = isEn ? $"Cooldown ({_storageCooldownRemaining}s)" : $"Ожидание ({_storageCooldownRemaining}с)...";
+                }
+            }
+            else
+            {
+                _storageCooldownTimer?.Stop();
+                _storageCooldownRemaining = 0;
+                if (BtnCleanSystem != null) BtnCleanSystem.IsEnabled = true;
+                if (BtnScanJunk != null) BtnScanJunk.IsEnabled = true;
+                if (BtnCleanSystemText != null)
+                {
+                    BtnCleanSystemText.Text = isEn ? "Clean System Cache" : "Очистить систему";
+                }
+                if (BtnScanJunkText != null)
+                {
+                    BtnScanJunkText.Text = isEn ? "Scan Cache" : "Сканировать кэш";
+                }
+            }
+        };
+        _storageCooldownTimer.Start();
     }
 
     #endregion
@@ -1914,7 +2043,7 @@ public partial class MainWindow : Window
         if (BtnLangRu != null) BtnLangRu.Style = lang == "RU" ? primaryStyle : pillStyle;
 
         ApplyLanguageStrings();
-                ScanJunkInternal();
+        _ = ScanJunkAsync(showLog: false);
         UpdateTelemetry();
     }
 
