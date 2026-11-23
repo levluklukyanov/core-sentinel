@@ -35,10 +35,6 @@ public static class SettingsPersistenceService
     public static string GetSettingsPath()
     {
         string dir = AppDomain.CurrentDomain.BaseDirectory;
-        if (!dir.StartsWith("D:\\", StringComparison.OrdinalIgnoreCase))
-        {
-            dir = @"D:\Prog_Proj\CoreSentinel";
-        }
         return Path.Combine(dir, "user_settings.json");
     }
 
