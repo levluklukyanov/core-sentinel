@@ -4,8 +4,11 @@
 [![Framework](https://img.shields.io/badge/.NET-10.0%20WPF-512BD4)](https://dotnet.microsoft.com/)
 [![Language](https://img.shields.io/badge/C%23-13.0-239120)](https://docs.microsoft.com/dotnet/csharp/)
 [![Release](https://img.shields.io/badge/Release-v1.0.0-success)](https://github.com/levluklukyanov/core-sentinel/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 High-performance Windows system utility, real-time hardware telemetry monitor, and gaming resource manager built with C# 13 and .NET 10 (WPF).
+
+![CoreSentinel Preview](docs/preview.png)
 
 ---
 
