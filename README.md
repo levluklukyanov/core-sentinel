@@ -5,63 +5,69 @@
 [![Language](https://img.shields.io/badge/C%23-13.0-239120)](https://docs.microsoft.com/dotnet/csharp/)
 [![Release](https://img.shields.io/badge/Release-v1.0.0-success)](https://github.com/levluklukyanov/core-sentinel/releases)
 
-Высокопроизводительный системный монитор, оптимизатор оперативной памяти/процессора и игровой центр для **Windows 10/11 (x64)**.
+High-performance Windows system utility, real-time hardware telemetry monitor, and gaming resource manager built with C# 13 and .NET 10 (WPF).
 
 ---
 
-## ⚡ Основные возможности
+## Overview
 
-1. **Аппаратная телеметрия в реальном времени**:
-   - Постоянный опрос нагрузки CPU, распределения RAM и накопителей (WMI + Win32 Native API).
-   - Интерактивный журнал событий с отметками времени и горизонтальной прокруткой.
+CoreSentinel provides real-time system monitoring, dual-engine memory and CPU optimization, game process prioritization, and disk maintenance within a single, lightweight desktop interface designed with engineering minimalism.
 
-2. **Оптимизация ОЗУ и ЦП**:
-   - Сброс системного кэша и принудительное высвобождение рабочих наборов (Working Set).
-   - Балансировка очередей выполнения процессора и понижение фоновых задач.
+## Features
 
-3. **Game Sentinel**:
-   - Автоматическое распознавание игровых процессов и приоритизация в реальном времени.
-   - Сканирование установленных игр с фильтрацией лаунчеров Minecraft.
+### Hardware Telemetry
+- Real-time tracking of CPU load, RAM allocation, and storage drives via WMI and Win32 Native APIs.
+- Detailed operation log with timestamps and horizontal navigation.
 
-4. **Менеджер хранилища**:
-   - Анализ разделов накопителей и пакетная очистка временных файлов (Temp, Delivery Optimization, DISM).
+### Resource Optimization
+- Memory purge: working set trimming and system standby cache flushing.
+- CPU balancing: execution queue normalization and background process deprioritization.
 
-5. **Плавающий HUD**:
-   - Компактный полупрозрачный оверлей для мониторинга поверх полноэкранных игр и приложений.
+### Game Sentinel
+- Automatic detection of active game sessions with instant execution priority boost.
+- Storage-wide game library scanner with duplicate exclusion and Minecraft launcher filtering.
 
-6. **Кастомизация и эргономика**:
-   - Светлая и тёмная темы оформления (инженерный минимализм).
-   - Хранилище вкладок (Tab Vault) с возможностью скрывать и переупорядочивать разделы.
-   - 5 встроенных шрифтов (Golos, Inter, JetBrains Mono, Manrope, Onest).
-   - Автоматическое сохранение конфигурации пользователя между сессиями.
+### Storage Management
+- Partition diagnostics and batch disk cleanup for system temp files, delivery optimization cache, and DISM image resets.
 
----
+### Floating Telemetry HUD
+- Low-overhead, semi-transparent overlay widget for on-screen monitoring during gaming sessions and compute workloads.
 
-## 📦 Быстрый старт
-
-1. Перейдите в раздел **[Releases](https://github.com/levluklukyanov/core-sentinel/releases)**.
-2. Скачайте автономный файл `CoreSentinel.exe`.
-3. Запустите программу.
-
-> **Почему размер файла около 65 МБ?**  
-> Приложение собрано в режиме `Self-Contained Single-File`. Весь рантайм .NET 10, зависимости и шрифты зашиты прямо внутрь бинарника. Программа работает «из коробки» на любой чистой Windows 10/11 без необходимости устанавливать дополнительные пакеты .NET.
+### Interface & Ergonomics
+- Clean Dark and Light themes adhering to Swiss modernist and engineering design principles.
+- Tab Vault system to hide, restore, and reorder navigation tabs.
+- Bundled system fonts: Golos Text, Inter, JetBrains Mono, Manrope, Onest.
+- Persistent user configuration saved across application sessions.
 
 ---
 
-## 🛠️ Сборка из исходников
+## Installation
 
-Требования:
-- Windows 10/11 x64
-- [.NET SDK 10.0](https://dotnet.microsoft.com/)
+1. Navigate to the [Releases](https://github.com/levluklukyanov/core-sentinel/releases) page.
+2. Download the standalone executable `CoreSentinel.exe`.
+3. Launch the application.
+
+> **Note on executable size (~65 MB):**  
+> The application is packaged as a Self-Contained Single-File binary. The complete .NET 10 runtime, native WPF dependencies, and typography assets are embedded directly into the executable. It runs out of the box on clean Windows 10/11 installations without requiring prior installation of the .NET SDK or Runtime packages.
+
+---
+
+## Building from Source
+
+### Prerequisites
+- Windows 10 / 11 (x64)
+- [.NET 10.0 SDK](https://dotnet.microsoft.com/)
+
+### Build Commands
 
 ```bash
-# Клонирование репозитория
+# Clone the repository
 git clone https://github.com/levluklukyanov/core-sentinel.git
 cd core-sentinel
 
-# Сборка решения
+# Build the solution in Release configuration
 dotnet build CoreSentinel.sln -c Release
 
-# Публикация автономного монолитного бинарника
+# Publish standalone single-file binary
 dotnet publish CoreSentinel.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
 ```
