@@ -20,6 +20,7 @@ public record CleanableTarget(
     string Path,
     long Bytes,
     int FileCount,
+    bool RequiresAdmin = false,
     bool IsSelected = true
 );
 
@@ -44,6 +45,27 @@ public static class StorageService
     private const uint SHERB_NOPROGRESSUI   = 0x00000002;
     private const uint SHERB_NOSOUND        = 0x00000004;
 
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateFileW(
+        string lpFileName,
+        uint dwDesiredAccess,
+        uint dwShareMode,
+        IntPtr lpSecurityAttributes,
+        uint dwCreationDisposition,
+        uint dwFlagsAndAttributes,
+        IntPtr hTemplateFile
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    private const uint GENERIC_DELETE = 0x00010000;
+    private const uint FILE_SHARE_READ = 0x00000001;
+    private const uint FILE_SHARE_WRITE = 0x00000002;
+    private const uint FILE_SHARE_DELETE = 0x00000004;
+    private const uint OPEN_EXISTING = 3;
+
     public static bool IsAdministrator()
     {
         try
@@ -58,31 +80,36 @@ public static class StorageService
         }
     }
 
-    public static bool IsFileLocked(FileInfo file)
+    public static bool CanDeleteFile(FileInfo file)
     {
-        try
-        {
-            var access = (file.Attributes & FileAttributes.ReadOnly) != 0 ? FileAccess.Read : FileAccess.ReadWrite;
-            using var stream = file.Open(FileMode.Open, access, FileShare.Delete);
-            return false;
-        }
-        catch
-        {
-            return true;
-        }
-    }
-
-    public static bool CanCleanFile(FileInfo file, bool isAdmin)
-    {
-        // Live CBS.log is locked by Windows TrustedInstaller and can NEVER be deleted while OS is running
+        // Live CBS.log is locked by Windows TrustedInstaller permanently
         if (string.Equals(file.Name, "CBS.log", StringComparison.OrdinalIgnoreCase))
             return false;
 
-        // System directories require administrative privileges
-        if (!isAdmin && file.FullName.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows), StringComparison.OrdinalIgnoreCase))
-            return false;
+        try
+        {
+            IntPtr hFile = CreateFileW(
+                file.FullName,
+                GENERIC_DELETE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                IntPtr.Zero,
+                OPEN_EXISTING,
+                0,
+                IntPtr.Zero
+            );
 
-        return !IsFileLocked(file);
+            if (hFile == IntPtr.Zero || hFile == new IntPtr(-1))
+            {
+                return false;
+            }
+
+            CloseHandle(hFile);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public static DiskInfo? GetDriveInfo(string driveLetter = "C")
@@ -136,9 +163,7 @@ public static class StorageService
         if (Directory.Exists(winTemp))
         {
             var (bytes, count) = GetDirectorySizeSafe(winTemp, cleanableOnly: true);
-            string name = isEn 
-                ? (isAdmin ? "Windows System Temp Cache" : "Windows System Temp (Admin Required)")
-                : (isAdmin ? "Системный кэш Windows Temp" : "Системный кэш Windows Temp (Нужны права админа)");
+            string name = isEn ? "Windows System Temp Cache" : "Системный кэш Windows Temp";
             targets.Add(new CleanableTarget(name, winTemp, bytes, count));
         }
 
@@ -146,22 +171,41 @@ public static class StorageService
         string swDist = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "Download");
         if (Directory.Exists(swDist))
         {
-            var (bytes, count) = GetDirectorySizeSafe(swDist, cleanableOnly: true);
-            string name = isEn 
-                ? (isAdmin ? "Windows Update Download Cache" : "Windows Update Cache (Admin Required)")
-                : (isAdmin ? "Кэш обновлений Windows (SoftwareDistribution)" : "Кэш обновлений Windows (Нужны права админа)");
-            targets.Add(new CleanableTarget(name, swDist, bytes, count));
+            if (isAdmin)
+            {
+                var (bytes, count) = GetDirectorySizeSafe(swDist, cleanableOnly: true);
+                string name = isEn ? "Windows Update Download Cache" : "Кэш обновлений Windows (SoftwareDistribution)";
+                targets.Add(new CleanableTarget(name, swDist, bytes, count));
+            }
+            else
+            {
+                var (totalBytes, count) = GetDirectorySizeSafe(swDist, cleanableOnly: false);
+                string name = totalBytes > 0
+                    ? (isEn ? "Windows Update Cache (Admin Required)" : "Кэш обновлений Windows (Нужны права админа)")
+                    : (isEn ? "Windows Update Download Cache" : "Кэш обновлений Windows (SoftwareDistribution)");
+                targets.Add(new CleanableTarget(name, swDist, totalBytes, count, RequiresAdmin: totalBytes > 0));
+            }
         }
 
         // 4. Delivery Optimization Cache
         string delivOpt = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "DeliveryOptimization");
         if (Directory.Exists(delivOpt))
         {
-            var (bytes, count) = GetDirectorySizeSafe(delivOpt, cleanableOnly: true);
-            string name = isEn 
-                ? (isAdmin ? "Delivery Optimization Peer Cache" : "Delivery Optimization (Admin Required)")
-                : (isAdmin ? "Кэш доставки обновлений (DeliveryOptimization)" : "Кэш доставки обновлений (Нужны права админа)");
-            targets.Add(new CleanableTarget(name, delivOpt, bytes, count));
+            if (isAdmin)
+            {
+                var (bytes, count) = GetDirectorySizeSafe(delivOpt, cleanableOnly: true);
+                string name = isEn ? "Delivery Optimization Peer Cache" : "Кэш доставки обновлений (DeliveryOptimization)";
+                targets.Add(new CleanableTarget(name, delivOpt, bytes, count));
+            }
+            else
+            {
+                var (totalBytes, count) = GetDirectorySizeSafe(delivOpt, cleanableOnly: false);
+                if (totalBytes > 0)
+                {
+                    string name = isEn ? "Delivery Optimization (Admin Required)" : "Кэш доставки обновлений (Нужны права админа)";
+                    targets.Add(new CleanableTarget(name, delivOpt, totalBytes, count, RequiresAdmin: true));
+                }
+            }
         }
 
         // 5. Crash Dumps
@@ -186,9 +230,7 @@ public static class StorageService
         if (Directory.Exists(cbsLogs))
         {
             var (bytes, count) = GetDirectorySizeSafe(cbsLogs, cleanableOnly: true);
-            string name = isEn 
-                ? (isAdmin ? "Windows CBS & Diagnostic Logs" : "Windows CBS Logs (Admin Required)")
-                : (isAdmin ? "Системные логи Windows (CBS / Logs)" : "Системные логи Windows (Нужны права админа)");
+            string name = isEn ? "Windows CBS Diagnostic Logs" : "Системные логи Windows (CBS)";
             targets.Add(new CleanableTarget(name, cbsLogs, bytes, count));
         }
 
@@ -209,10 +251,7 @@ public static class StorageService
             }
             catch { }
         }
-        if (binBytes > 0 || binCount > 0)
-        {
-            targets.Add(new CleanableTarget(isEn ? "Windows Recycle Bin (All Drives)" : "Корзина Windows (Все диски)", "$Recycle.Bin", binBytes, binCount));
-        }
+        targets.Add(new CleanableTarget(isEn ? "Windows Recycle Bin (All Drives)" : "Корзина Windows (Все диски)", "$Recycle.Bin", binBytes, binCount));
 
         return targets;
     }
@@ -450,13 +489,6 @@ public static class StorageService
 
         if (!Directory.Exists(path)) return (0, 0);
 
-        bool isAdmin = IsAdministrator();
-        bool isWinDir = path.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows), StringComparison.OrdinalIgnoreCase);
-
-        // If it's a Windows system directory and user is not admin, files cannot be cleaned
-        if (isWinDir && !isAdmin)
-            return (0, 0);
-
         try
         {
             var dir = new DirectoryInfo(path);
@@ -464,7 +496,7 @@ public static class StorageService
             {
                 try
                 {
-                    if (cleanableOnly && !CanCleanFile(file, isAdmin))
+                    if (cleanableOnly && !CanDeleteFile(file))
                         continue;
 
                     total += file.Length;

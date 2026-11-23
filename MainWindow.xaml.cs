@@ -1533,21 +1533,15 @@ public partial class MainWindow : Window
         if (StorageLogFooter != null) StorageLogFooter.Text = _currentLanguage == "EN" ? "Console cleared" : "Консоль очищена";
     }
 
-    private async Task ScanJunkAsync(bool showLog = true, bool isManualClick = false)
+    private async Task PerformScanCoreAsync(bool showLog = false)
     {
-        if (_isStorageOperationRunning) return;
-        if (isManualClick && _storageCooldownRemaining > 0) return;
-
         bool isEn = _currentLanguage == "EN";
-
-        if (BtnScanJunk != null) BtnScanJunk.IsEnabled = false;
-        if (BtnCleanSystem != null && _storageCooldownRemaining <= 0) BtnCleanSystem.IsEnabled = false;
 
         if (showLog)
         {
             LogStorage(isEn ? "--> Starting scan for cleanable cache targets..." : "--> Сканирование безопасных целей очистки...");
+            StatusFooterText.Text = isEn ? "Scanning temporary junk files..." : "Сканирование временных файлов...";
         }
-        StatusFooterText.Text = isEn ? "Scanning temporary junk files..." : "Сканирование временных файлов...";
 
         try
         {
@@ -1562,6 +1556,12 @@ public partial class MainWindow : Window
 
             CleanTargetsList.ItemsSource = displayItems;
             long totalBytes = targets.Sum(t => t.Bytes);
+
+            bool isAdmin = StorageService.IsAdministrator();
+            if (BtnRelaunchAdmin != null)
+            {
+                BtnRelaunchAdmin.Visibility = !isAdmin ? Visibility.Visible : Visibility.Collapsed;
+            }
 
             if (showLog)
             {
@@ -1583,6 +1583,20 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             LogStorage($"[ERROR] Scan error: {ex.Message}");
+        }
+    }
+
+    private async Task ScanJunkAsync(bool showLog = true, bool isManualClick = false)
+    {
+        if (_isStorageOperationRunning) return;
+        if (isManualClick && _storageCooldownRemaining > 0) return;
+
+        if (BtnScanJunk != null) BtnScanJunk.IsEnabled = false;
+        if (BtnCleanSystem != null && _storageCooldownRemaining <= 0) BtnCleanSystem.IsEnabled = false;
+
+        try
+        {
+            await PerformScanCoreAsync(showLog);
         }
         finally
         {
@@ -1624,8 +1638,8 @@ public partial class MainWindow : Window
                 ? $"[SUCCESS] Cleanup completed. Total reclaimed: {StorageService.FormatBytes(res.BytesFreed)} in {res.FilesRemoved} files."
                 : $"[УСПЕХ] Очистка завершена. Освобождено: {StorageService.FormatBytes(res.BytesFreed)} в {res.FilesRemoved} файлах.");
 
-            // Asynchronous non-blocking re-scan
-            await ScanJunkAsync(showLog: false);
+            // Directly invoke core rescan to immediately refresh UI without getting blocked by operation flag
+            await PerformScanCoreAsync(showLog: false);
             UpdateTelemetry();
         }
         catch (Exception ex)
@@ -1637,6 +1651,36 @@ public partial class MainWindow : Window
         {
             _isStorageOperationRunning = false;
             StartStorageCooldown(5);
+        }
+    }
+
+    private void BtnRelaunchAdmin_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? "";
+            if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath))
+            {
+                exePath = System.IO.Path.Combine(AppContext.BaseDirectory, "CoreSentinel.exe");
+            }
+
+            var psi = new ProcessStartInfo(exePath)
+            {
+                UseShellExecute = true,
+                Verb = "runas"
+            };
+
+            Process.Start(psi);
+            Application.Current.Shutdown();
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            bool isEn = _currentLanguage == "EN";
+            StatusFooterText.Text = isEn ? "Administrator elevation cancelled." : "Запуск от имени администратора отменен.";
+        }
+        catch (Exception ex)
+        {
+            StatusFooterText.Text = $"Elevation error: {ex.Message}";
         }
     }
 
@@ -2105,6 +2149,7 @@ public partial class MainWindow : Window
         CleanTargetsTitle.Text = isEn ? "SAFE CLEANUP TARGETS" : "ОБЛАСТИ БЕЗОПАСНОЙ ОЧИСТКИ";
         BtnScanJunkText.Text = isEn ? "Scan Cache" : "Сканировать кэш";
         if (BtnCleanSystemText != null) BtnCleanSystemText.Text = isEn ? "Clean System Cache" : "Очистить систему";
+        if (BtnRelaunchAdminText != null) BtnRelaunchAdminText.Text = isEn ? "Run as Admin" : "Запуск от админа";
         if (StorageLogTitle != null) StorageLogTitle.Text = isEn ? "ACTIVITY & CLEANUP CONSOLE" : "КОНСОЛЬ АКТИВНОСТИ И ОЧИСТКИ";
         if (StorageLogFooter != null && (StorageLogFooter.Text == "Ready" || StorageLogFooter.Text == "Готов к работе"))
             StorageLogFooter.Text = isEn ? "Ready" : "Готов к работе";
