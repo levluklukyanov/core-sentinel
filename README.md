@@ -30,17 +30,25 @@ CoreSentinel provides real-time system monitoring, dual-engine memory and CPU op
 - Automatic detection of active game sessions with instant execution priority boost.
 - Storage-wide game library scanner with duplicate exclusion and Minecraft launcher filtering.
 
-### Storage Management
-- Partition diagnostics and batch disk cleanup for temporary folders, update caches, error logs, and Windows Component Store maintenance via `DISM /StartComponentCleanup`.
+### Storage Management & System Maintenance
+- **Configurable Cleanup Engine:** Granular selection of cleanup targets via a dedicated gear menu (Temporary files, Windows Update `SoftwareDistribution` cache, Windows Error Reporting and CBS logs, DNS cache, Recycle Bin, and DISM Component Store maintenance).
+- **System Restore Point & Rollback Protection:** Automated Windows System Restore Point creation (`Checkpoint-Computer`) before deep cleanup operations, with one-click access to the Windows System Restore wizard (`rstrui.exe`).
+- **Interactive Target Sorting:** Organize detected targets by Size (Descending / Ascending) or Alphabetical Name (A–Z), persisted across application sessions.
 
 ### Floating Telemetry HUD
 - Low-overhead, semi-transparent overlay widget for on-screen monitoring during gaming sessions and compute workloads.
 
 ### Interface & Ergonomics
 - Clean Dark and Light themes adhering to Swiss modernist and engineering design principles.
+- Dynamic runtime localization (English and Russian) across all views via `LocalizationService`.
 - Tab Vault system to hide, restore, and reorder navigation tabs.
 - Bundled system fonts: Golos Text, Inter, JetBrains Mono, Manrope, Onest.
-- Persistent user configuration saved across application sessions.
+- Safe settings storage in `%APPDATA%\CoreSentinel\user_settings.json` with automatic legacy migration and portable mode (`portable.flag`).
+
+### Architecture & Reliability
+- **Modular MVVM Structure:** Decoupled UserControls and dedicated ViewModels powered by `CommunityToolkit.Mvvm`.
+- **Thread-Safe Rotating Logging:** Comprehensive diagnostics at `%LOCALAPPDATA%\CoreSentinel\logs\app.log` and `crash_log.txt` with automatic 1 MB rotation (`.old`).
+- **Automated Unit Testing:** Dedicated test suite (`CoreSentinel.Tests`) with 32 automated xUnit tests validating size calculations, safety defaults, settings serialization, game detection, and launcher exclusions.
 
 ---
 
@@ -83,6 +91,9 @@ CoreSentinel operates transparently and strictly modifies only documented system
 ### 4. Administrator Privileges (UAC)
 The core application is fully operational under a standard, non-elevated user account for telemetry, working set trimming, user temp cleanup, and HKCU startup management. Deep system maintenance (Windows Temp, SoftwareDistribution, CBS logs, DISM, and HKLM registry modifications) requires running as Administrator via the built-in "Run as Admin" button.
 
+### 5. System Restore Points
+Before executing deep cleanup routines, CoreSentinel can trigger a native Windows System Restore checkpoint via PowerShell (`Checkpoint-Computer -Description 'CoreSentinel Before Deep Cleanup' -RestorePointType 'MODIFY_SETTINGS'`). This allows users to revert system state via `rstrui.exe` at any time.
+
 ---
 
 ## Windows SmartScreen and Antivirus Notice
@@ -116,6 +127,9 @@ The entire source code is 100% open, auditable, and can be built directly from s
 # Clone the repository
 git clone https://github.com/levluklukyanov/core-sentinel.git
 cd core-sentinel
+
+# Run unit test suite
+dotnet test CoreSentinel.sln -c Release
 
 # Build the solution in Release configuration
 dotnet build CoreSentinel.sln -c Release
