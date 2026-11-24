@@ -35,6 +35,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="CoreSentinel.Tests\**" />
+    <EmbeddedResource Remove="CoreSentinel.Tests\**" />
+    <None Remove="CoreSentinel.Tests\**" />
+    <Page Remove="CoreSentinel.Tests\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="System.Management" Version="9.0.0" />
   </ItemGroup>

@@ -826,6 +826,6 @@ public static class StorageService
             unitIndex++;
         }
 
-        return $"{size:0.##} {units[unitIndex]}";
+        return $"{size.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)} {units[unitIndex]}";
     }
 }

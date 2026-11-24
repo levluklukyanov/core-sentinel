@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore CoreSentinel.sln
+
+      - name: Run Unit Tests
+        run: dotnet test CoreSentinel.sln -c Release --no-restore --verbosity normal
+
+      - name: Publish Single-File Executable
+        run: |
+          dotnet publish CoreSentinel.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish
+
+      - name: Package Release Archive
+        shell: pwsh
+        run: |
+          # Ensure clean.bat exists in publish directory
+          if (-not (Test-Path ./publish/clean.bat)) {
+            Copy-Item -Path clean.bat -Destination ./publish/clean.bat
+          }
+          # Create zip archive of the published release package
+          Compress-Archive -Path ./publish/* -DestinationPath ./CoreSentinel-win-x64.zip -Force
+          # Copy standalone executable to root for direct download asset
+          Copy-Item -Path ./publish/CoreSentinel.exe -Destination ./CoreSentinel.exe -Force
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: |
+            CoreSentinel.exe
+            CoreSentinel-win-x64.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
