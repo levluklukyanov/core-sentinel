@@ -84,6 +84,14 @@ public partial class MainWindow : Window
         ResizeMode = ResizeMode.NoResize;
         WindowState = WindowState.Maximized;
 
+        SettingsPersistenceService.OnSettingsError += msg =>
+        {
+            Dispatcher.Invoke(() =>
+            {
+                if (StatusFooterText != null) StatusFooterText.Text = msg;
+            });
+        };
+
         LoadAndApplyUserSettings();
 
         _telemetryTimer = new DispatcherTimer
@@ -152,11 +160,18 @@ public partial class MainWindow : Window
             _settings.ActiveTabs = _activeTabs.Select(t => t.Key).ToList();
             _settings.VaultTabs = _vaultTabs.Select(t => t.Key).ToList();
 
-            SettingsPersistenceService.Save(_settings);
+            if (!SettingsPersistenceService.Save(_settings))
+            {
+                if (SettingsPersistenceService.LastError != null)
+                {
+                    StatusFooterText.Text = $"Settings save error: {SettingsPersistenceService.LastError}";
+                }
+            }
         }
         catch (Exception ex)
         {
             Logger.Warn($"Failed to persist runtime settings: {ex.Message}");
+            StatusFooterText.Text = $"Settings save error: {ex.Message}";
         }
     }
 
