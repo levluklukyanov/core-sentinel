@@ -23,7 +23,7 @@ CoreSentinel provides real-time system monitoring, dual-engine memory and CPU op
 - Detailed operation log with timestamps and horizontal navigation.
 
 ### Resource Optimization
-- Memory purge: working set trimming and system standby cache flushing.
+- Memory purge: working set trimming via native Win32 `EmptyWorkingSet` API.
 - CPU balancing: execution queue normalization and background process deprioritization.
 
 ### Game Sentinel
@@ -31,7 +31,7 @@ CoreSentinel provides real-time system monitoring, dual-engine memory and CPU op
 - Storage-wide game library scanner with duplicate exclusion and Minecraft launcher filtering.
 
 ### Storage Management
-- Partition diagnostics and batch disk cleanup for system temp files, delivery optimization cache, and DISM image resets.
+- Partition diagnostics and batch disk cleanup for temporary folders, update caches, error logs, and Windows Component Store maintenance via `DISM /StartComponentCleanup`.
 
 ### Floating Telemetry HUD
 - Low-overhead, semi-transparent overlay widget for on-screen monitoring during gaming sessions and compute workloads.
@@ -41,6 +41,55 @@ CoreSentinel provides real-time system monitoring, dual-engine memory and CPU op
 - Tab Vault system to hide, restore, and reorder navigation tabs.
 - Bundled system fonts: Golos Text, Inter, JetBrains Mono, Manrope, Onest.
 - Persistent user configuration saved across application sessions.
+
+---
+
+## Memory Trimming & Honest Expectations
+
+CoreSentinel uses the native Win32 `EmptyWorkingSet` API to trim memory working sets. This function requests Windows to move unreferenced pages from physical RAM into the standby pool or pagefile.
+
+- **Realistic Effect:** Trimming working sets provides an immediate, observable reduction in reported RAM usage, which can be useful before launching demanding workloads or games.
+- **No Magic Acceleration:** It does not magically accelerate Windows. As active applications demand their data, Windows will fault required pages back into physical RAM. During this transition, a brief increase in disk I/O may occur. CoreSentinel does not make unsubstantiated claims of "doubling PC speed".
+
+---
+
+## What the App Modifies in the System
+
+CoreSentinel operates transparently and strictly modifies only documented system locations:
+
+### 1. File System Cleanup Targets
+- **User Space (Standard Rights):**
+  - `%TEMP%` (Current user temporary directory)
+  - `%LOCALAPPDATA%\CrashDumps` (User crash dump files)
+  - `%LOCALAPPDATA%\Microsoft\Windows\WER\ReportArchive` and `ReportQueue` (User error reports)
+  - `$Recycle.Bin` (Emptied via native Shell32 API across mounted volumes)
+- **System Space (Requires Administrator Privileges):**
+  - `%SystemRoot%\Temp` (Windows system temporary files)
+  - `%SystemRoot%\SoftwareDistribution\Download` (Cached Windows update installation files)
+  - `%SystemRoot%\SoftwareDistribution\DeliveryOptimization` (Peer-to-peer update distribution cache)
+  - `%SystemRoot%\Logs\CBS` (Archived Component-Based Servicing logs; active `CBS.log` is strictly preserved)
+  - `%ProgramData%\Microsoft\Windows\WER` (Machine-wide error report archives)
+  - Windows Component Store: `dism.exe /Online /Cleanup-Image /StartComponentCleanup` to reclaim superseded WinSxS payloads. Note: CoreSentinel does not execute `/ResetBase` by default to preserve update rollback capabilities.
+
+### 2. Windows Registry
+- **Startup Manager:**
+  - `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run` and `StartupApproved\Run` (User autostart items).
+  - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run` and `StartupApproved\Run` (Machine-wide autostart items; requires Administrator privileges).
+
+### 3. Process Execution Priorities
+- **CPU Optimization:** Temporarily lowers thread priority of select heavy background services (e.g., OneDrive, Dropbox, GoogleDriveSync, SearchIndexer) to `BelowNormal`.
+- **Game Sentinel:** Elevates the execution priority of recognized active game processes to `High` to ensure consistent frame pacing.
+
+### 4. Administrator Privileges (UAC)
+The core application is fully operational under a standard, non-elevated user account for telemetry, working set trimming, user temp cleanup, and HKCU startup management. Deep system maintenance (Windows Temp, SoftwareDistribution, CBS logs, DISM, and HKLM registry modifications) requires running as Administrator via the built-in "Run as Admin" button.
+
+---
+
+## Windows SmartScreen and Antivirus Notice
+
+CoreSentinel is a free, open-source utility distributed without an expensive commercial Extended Validation (EV) Code Signing certificate. Because the binary interacts with Win32 process APIs, system cleanup paths, and registry autostart keys, Windows SmartScreen ("Windows protected your PC") or certain antivirus heuristics may display an alert upon first launch.
+
+The entire source code is 100% open, auditable, and can be built directly from source using the instructions below.
 
 ---
 
