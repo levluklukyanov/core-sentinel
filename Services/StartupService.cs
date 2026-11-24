@@ -12,6 +12,8 @@ public record StartupEntry(
     public string EnabledText => IsEnabled ? "Вкл" : "Выкл";
 }
 
+public record StartupOperationResult(bool Success, string Message);
+
 public static class StartupService
 {
     private static readonly (string KeyPath, string Hive, bool IsUser)[] Sources =
@@ -82,8 +84,16 @@ public static class StartupService
         return set;
     }
 
-    public static bool SetEntryEnabled(StartupEntry entry, bool enable)
+    public static StartupOperationResult SetEntryEnabled(StartupEntry entry, bool enable, bool isEn = false)
     {
+        if (entry.Source.StartsWith("HKLM", StringComparison.OrdinalIgnoreCase) && !StorageService.IsAdministrator())
+        {
+            string reason = isEn 
+                ? "Skipped: administrator privileges required." 
+                : "Пропущено: нужны права администратора.";
+            return new StartupOperationResult(false, reason);
+        }
+
         // We modify the StartupApproved key to toggle without deleting the entry
         var approvedPaths = new[]
         {
@@ -104,10 +114,13 @@ public static class StartupService
                     if (existing.Length > 0)
                         existing[0] = enable ? (byte)0x02 : (byte)0x03;
                     key.SetValue(entry.Name, existing, RegistryValueKind.Binary);
-                    return true;
+                    return new StartupOperationResult(true, isEn ? "Startup entry updated." : "Элемент автозагрузки обновлен.");
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                return new StartupOperationResult(false, ex.Message);
+            }
         }
 
         // If not found in StartupApproved, write directly into Run key
@@ -122,23 +135,38 @@ public static class StartupService
                     key.SetValue(entry.Name, entry.Command);
                 else
                     key.DeleteValue(entry.Name, throwOnMissingValue: false);
-                return true;
+                return new StartupOperationResult(true, isEn ? "Startup entry updated." : "Элемент автозагрузки обновлен.");
             }
         }
-        catch { }
-        return false;
+        catch (Exception ex)
+        {
+            return new StartupOperationResult(false, ex.Message);
+        }
+
+        return new StartupOperationResult(false, isEn ? "Could not modify entry." : "Не удалось изменить элемент.");
     }
 
-    public static bool DeleteEntry(StartupEntry entry)
+    public static StartupOperationResult DeleteEntry(StartupEntry entry, bool isEn = false)
     {
+        if (entry.Source.StartsWith("HKLM", StringComparison.OrdinalIgnoreCase) && !StorageService.IsAdministrator())
+        {
+            string reason = isEn 
+                ? "Skipped: administrator privileges required." 
+                : "Пропущено: нужны права администратора.";
+            return new StartupOperationResult(false, reason);
+        }
+
         try
         {
             var root = entry.Source.StartsWith("HKCU") ? Registry.CurrentUser : Registry.LocalMachine;
             using var key = root.OpenSubKey(
                 @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", writable: true);
             key?.DeleteValue(entry.Name, throwOnMissingValue: false);
-            return true;
+            return new StartupOperationResult(true, isEn ? $"Removed '{entry.Name}' from startup." : $"'{entry.Name}' удален из автозапуска.");
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            return new StartupOperationResult(false, ex.Message);
+        }
     }
 }

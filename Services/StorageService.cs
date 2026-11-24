@@ -27,7 +27,10 @@ public record CleanableTarget(
 public record CleanResult(
     long BytesFreed,
     int FilesRemoved,
-    int FilesSkipped
+    int FilesSkipped,
+    int AdminSkippedStages = 0,
+    bool HasErrors = false,
+    string SummaryMessage = ""
 );
 
 public record LargeDirectory(
@@ -162,9 +165,18 @@ public static class StorageService
         string winTemp = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp");
         if (Directory.Exists(winTemp))
         {
-            var (bytes, count) = GetDirectorySizeSafe(winTemp, cleanableOnly: true);
-            string name = isEn ? "Windows System Temp Cache" : "Системный кэш Windows Temp";
-            targets.Add(new CleanableTarget(name, winTemp, bytes, count));
+            if (isAdmin)
+            {
+                var (bytes, count) = GetDirectorySizeSafe(winTemp, cleanableOnly: true);
+                string name = isEn ? "Windows System Temp Cache" : "Системный кэш Windows Temp";
+                targets.Add(new CleanableTarget(name, winTemp, bytes, count));
+            }
+            else
+            {
+                var (totalBytes, count) = GetDirectorySizeSafe(winTemp, cleanableOnly: false);
+                string name = isEn ? "Windows System Temp (Admin Required)" : "Системный кэш Windows Temp (Нужны права админа)";
+                targets.Add(new CleanableTarget(name, winTemp, totalBytes, count, RequiresAdmin: true));
+            }
         }
 
         // 3. Windows Update Download Cache
@@ -229,9 +241,18 @@ public static class StorageService
         string cbsLogs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Logs", "CBS");
         if (Directory.Exists(cbsLogs))
         {
-            var (bytes, count) = GetDirectorySizeSafe(cbsLogs, cleanableOnly: true);
-            string name = isEn ? "Windows CBS Diagnostic Logs" : "Системные логи Windows (CBS)";
-            targets.Add(new CleanableTarget(name, cbsLogs, bytes, count));
+            if (isAdmin)
+            {
+                var (bytes, count) = GetDirectorySizeSafe(cbsLogs, cleanableOnly: true);
+                string name = isEn ? "Windows CBS Diagnostic Logs" : "Системные логи Windows (CBS)";
+                targets.Add(new CleanableTarget(name, cbsLogs, bytes, count));
+            }
+            else
+            {
+                var (totalBytes, count) = GetDirectorySizeSafe(cbsLogs, cleanableOnly: false);
+                string name = isEn ? "Windows CBS Logs (Admin Required)" : "Системные логи Windows (CBS) (Нужны права админа)";
+                targets.Add(new CleanableTarget(name, cbsLogs, totalBytes, count, RequiresAdmin: true));
+            }
         }
 
         // 8. Recycle Bin
@@ -314,20 +335,36 @@ public static class StorageService
         long totalFreed = 0;
         int totalRemoved = 0;
         int totalSkipped = 0;
+        int adminSkippedStages = 0;
+        bool hasErrors = false;
         bool isAdmin = IsAdministrator();
 
         // Stage 1: Temp Folders
         logCallback(isEn 
-            ? "[1/5] Cleaning temporary folders (%TEMP% and Windows Temp)..." 
-            : "[1/5] Очистка временных папок (%TEMP% и Windows Temp)...");
+            ? "[1/6] Cleaning temporary folders (%TEMP% and Windows Temp)..." 
+            : "[1/6] Очистка временных папок (%TEMP% и Windows Temp)...");
 
         string userTemp = Path.GetTempPath();
         var r1 = CleanDirectoryContents(userTemp);
+        totalFreed += r1.BytesFreed;
+        totalRemoved += r1.FilesRemoved;
+        totalSkipped += r1.FilesSkipped;
+
         string winTemp = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp");
-        var r2 = CleanDirectoryContents(winTemp);
-        totalFreed += r1.BytesFreed + r2.BytesFreed;
-        totalRemoved += r1.FilesRemoved + r2.FilesRemoved;
-        totalSkipped += r1.FilesSkipped + r2.FilesSkipped;
+        if (isAdmin)
+        {
+            var r2 = CleanDirectoryContents(winTemp);
+            totalFreed += r2.BytesFreed;
+            totalRemoved += r2.FilesRemoved;
+            totalSkipped += r2.FilesSkipped;
+        }
+        else
+        {
+            logCallback(isEn 
+                ? "[Windows Temp] Skipped: administrator privileges required." 
+                : "[Windows Temp] Пропущено: нужны права администратора.");
+            adminSkippedStages++;
+        }
 
         // Stage 2: Windows Update & Delivery Optimization
         string swDist = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "Download");
@@ -336,8 +373,8 @@ public static class StorageService
         if (isAdmin)
         {
             logCallback(isEn 
-                ? "[2/5] Cleaning Windows Update and Delivery Optimization caches..." 
-                : "[2/5] Очистка кэша обновлений Windows и Delivery Optimization...");
+                ? "[2/6] Cleaning Windows Update and Delivery Optimization caches..." 
+                : "[2/6] Очистка кэша обновлений Windows и Delivery Optimization...");
 
             // Temporarily unhook Windows Update service to release file locks on downloaded updates
             try
@@ -365,14 +402,15 @@ public static class StorageService
         else
         {
             logCallback(isEn 
-                ? "[2/5] Windows Update cache requires Administrator privileges (skipped)." 
-                : "[2/5] Кэш обновлений Windows требует прав Администратора (пропущено).");
+                ? "[SoftwareDistribution] Skipped: administrator privileges required." 
+                : "[SoftwareDistribution] Пропущено: нужны права администратора.");
+            adminSkippedStages++;
         }
 
         // Stage 3: Error Reports and Diagnostic Logs (excluding active CBS.log)
         logCallback(isEn 
-            ? "[3/5] Clearing error reports and system diagnostic logs..." 
-            : "[3/5] Очистка отчетов об ошибках и логов...");
+            ? "[3/6] Clearing error reports and system diagnostic logs..." 
+            : "[3/6] Очистка отчетов об ошибках и логов...");
 
         string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         string progData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
@@ -381,15 +419,30 @@ public static class StorageService
         var r7 = CleanDirectoryContents(Path.Combine(localAppData, "Microsoft", "Windows", "WER", "ReportQueue"));
         var r8 = CleanDirectoryContents(Path.Combine(progData, "Microsoft", "Windows", "WER", "ReportArchive"));
         var r9 = CleanDirectoryContents(Path.Combine(progData, "Microsoft", "Windows", "WER", "ReportQueue"));
-        var r10 = CleanDirectoryContents(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Logs", "CBS"));
-        totalFreed += r5.BytesFreed + r6.BytesFreed + r7.BytesFreed + r8.BytesFreed + r9.BytesFreed + r10.BytesFreed;
-        totalRemoved += r5.FilesRemoved + r6.FilesRemoved + r7.FilesRemoved + r8.FilesRemoved + r9.FilesRemoved + r10.FilesRemoved;
-        totalSkipped += r5.FilesSkipped + r6.FilesSkipped + r7.FilesSkipped + r8.FilesSkipped + r9.FilesSkipped + r10.FilesSkipped;
+        totalFreed += r5.BytesFreed + r6.BytesFreed + r7.BytesFreed + r8.BytesFreed + r9.BytesFreed;
+        totalRemoved += r5.FilesRemoved + r6.FilesRemoved + r7.FilesRemoved + r8.FilesRemoved + r9.FilesRemoved;
+        totalSkipped += r5.FilesSkipped + r6.FilesSkipped + r7.FilesSkipped + r8.FilesSkipped + r9.FilesSkipped;
+
+        string cbsLogs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Logs", "CBS");
+        if (isAdmin)
+        {
+            var r10 = CleanDirectoryContents(cbsLogs);
+            totalFreed += r10.BytesFreed;
+            totalRemoved += r10.FilesRemoved;
+            totalSkipped += r10.FilesSkipped;
+        }
+        else
+        {
+            logCallback(isEn 
+                ? "[CBS Logs] Skipped: administrator privileges required." 
+                : "[CBS Logs] Пропущено: нужны права администратора.");
+            adminSkippedStages++;
+        }
 
         // Stage 4: DNS Cache Flush
         logCallback(isEn 
-            ? "[4/5] Flushing network DNS resolver cache..." 
-            : "[4/5] Сброс сетевого DNS-кэша...");
+            ? "[4/6] Flushing network DNS resolver cache..." 
+            : "[4/6] Сброс сетевого DNS-кэша...");
 
         try
         {
@@ -407,8 +460,8 @@ public static class StorageService
 
         // Stage 5: Empty Recycle Bin via native Shell32 API (instant, no powershell overhead)
         logCallback(isEn 
-            ? "[5/5] Emptying Windows Recycle Bin across all drives..." 
-            : "[5/5] Очистка Корзины на всех накопителях...");
+            ? "[5/6] Emptying Windows Recycle Bin across all drives..." 
+            : "[5/6] Очистка Корзины на всех накопителях...");
 
         try
         {
@@ -431,15 +484,88 @@ public static class StorageService
             catch { }
         }
 
-        string skippedDetail = totalSkipped > 0
-            ? (isEn ? $" (skipped {totalSkipped} locked/in-use files)" : $" (пропущено {totalSkipped} файлов, занятых системой)")
-            : "";
-
+        // Stage 6: Windows Component Store Cleanup (DISM)
         logCallback(isEn 
-            ? $"System cleanup completed! Freed: {FormatBytes(totalFreed)}{skippedDetail}." 
-            : $"Очистка завершена! Освобождено: {FormatBytes(totalFreed)}{skippedDetail}.");
+            ? "[6/6] Cleaning Windows Component Store (DISM)..." 
+            : "[6/6] Очистка хранилища компонентов Windows (DISM)...");
 
-        return new CleanResult(totalFreed, totalRemoved, totalSkipped);
+        if (isAdmin)
+        {
+            try
+            {
+                string dismPath = Path.Combine(Environment.SystemDirectory, "dism.exe");
+                var psi = new ProcessStartInfo(dismPath, "/Online /Cleanup-Image /StartComponentCleanup")
+                {
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+
+                using var p = Process.Start(psi);
+                if (p != null)
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+                    try
+                    {
+                        await p.WaitForExitAsync(cts.Token);
+                        if (p.ExitCode != 0)
+                        {
+                            hasErrors = true;
+                            logCallback(isEn 
+                                ? $"[DISM] Failed with ExitCode {p.ExitCode}." 
+                                : $"[DISM] Завершился с ошибкой (код выхода: {p.ExitCode}).");
+                        }
+                        else
+                        {
+                            logCallback(isEn 
+                                ? "[DISM] Component cleanup completed successfully." 
+                                : "[DISM] Очистка хранилища компонентов успешно завершена.");
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        hasErrors = true;
+                        try { p.Kill(); } catch { }
+                        logCallback(isEn 
+                            ? "[DISM] Operation timed out (exceeded 120s)." 
+                            : "[DISM] Операция прервана по тайм-ауту (более 120 сек).");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                hasErrors = true;
+                logCallback(isEn 
+                    ? $"[DISM] Execution error: {ex.Message}" 
+                    : $"[DISM] Ошибка запуска DISM: {ex.Message}");
+            }
+        }
+        else
+        {
+            logCallback(isEn 
+                ? "[DISM] Skipped: administrator privileges required." 
+                : "[DISM] Пропущено: нужны права администратора.");
+            adminSkippedStages++;
+        }
+
+        // Format honest summary message
+        string summaryMessage;
+        if (adminSkippedStages > 0 || totalSkipped > 0 || hasErrors)
+        {
+            summaryMessage = isEn
+                ? $"Cleanup completed with limitations. Freed: {FormatBytes(totalFreed)}, removed {totalRemoved} files, locked/in-use: {totalSkipped}, skipped due to permissions: {adminSkippedStages} step(s)."
+                : $"Очистка выполнена с ограничениями. Освобождено: {FormatBytes(totalFreed)}, удалено файлов: {totalRemoved}, занято/заблокировано: {totalSkipped}, пропущено по правам: {adminSkippedStages} шагов.";
+        }
+        else
+        {
+            summaryMessage = isEn
+                ? $"Cleanup completed successfully. Freed: {FormatBytes(totalFreed)}, removed {totalRemoved} files."
+                : $"Очистка успешно завершена. Освобождено: {FormatBytes(totalFreed)}, удалено файлов: {totalRemoved}.";
+        }
+
+        logCallback(summaryMessage);
+
+        return new CleanResult(totalFreed, totalRemoved, totalSkipped, adminSkippedStages, hasErrors, summaryMessage);
     }
 
     public static List<LargeDirectory> ScanLargeDirectories(string? driveLetter = null, int maxResults = 8)

@@ -1666,9 +1666,18 @@ public partial class MainWindow : Window
                 StatusFooterText.Text = stepMsg;
             });
 
-            LogStorage(isEn
-                ? $"[SUCCESS] Cleanup completed. Total reclaimed: {StorageService.FormatBytes(res.BytesFreed)} in {res.FilesRemoved} files."
-                : $"[УСПЕХ] Очистка завершена. Освобождено: {StorageService.FormatBytes(res.BytesFreed)} в {res.FilesRemoved} файлах.");
+            if (res.AdminSkippedStages > 0 || res.FilesSkipped > 0 || res.HasErrors)
+            {
+                StatusFooterText.Text = isEn
+                    ? $"Cleanup finished with warnings. Freed {StorageService.FormatBytes(res.BytesFreed)} (admin skipped: {res.AdminSkippedStages}, locked: {res.FilesSkipped})."
+                    : $"Очистка выполнена с ограничениями. Освобождено {StorageService.FormatBytes(res.BytesFreed)} (без прав: {res.AdminSkippedStages}, занято: {res.FilesSkipped}).";
+            }
+            else
+            {
+                StatusFooterText.Text = isEn
+                    ? $"Cleanup completed. Freed {StorageService.FormatBytes(res.BytesFreed)}."
+                    : $"Очистка завершена. Освобождено {StorageService.FormatBytes(res.BytesFreed)}.";
+            }
 
             // Directly invoke core rescan to immediately refresh UI without getting blocked by operation flag
             await PerformScanCoreAsync(showLog: false);
@@ -2628,7 +2637,9 @@ public partial class MainWindow : Window
     {
         if (sender is Button btn && btn.Tag is StartupEntry entry)
         {
-            StartupService.SetEntryEnabled(entry, !entry.IsEnabled);
+            bool isEn = _currentLanguage == "EN";
+            var res = StartupService.SetEntryEnabled(entry, !entry.IsEnabled, isEn);
+            StatusFooterText.Text = res.Message;
             LoadStartupEntries();
         }
     }
@@ -2638,11 +2649,9 @@ public partial class MainWindow : Window
         if (sender is Button btn && btn.Tag is StartupEntry entry)
         {
             bool isEn = _currentLanguage == "EN";
-
-
-            StartupService.DeleteEntry(entry);
+            var res = StartupService.DeleteEntry(entry, isEn);
+            StatusFooterText.Text = res.Message;
             LoadStartupEntries();
-            StatusFooterText.Text = isEn ? $"Removed '{entry.Name}' from startup." : $"'{entry.Name}' удален из автозапуска.";
         }
     }
 
