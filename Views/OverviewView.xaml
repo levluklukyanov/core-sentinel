@@ -1,0 +1,221 @@
+<UserControl x:Class="CoreSentinel.Views.OverviewView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" 
+             d:DesignHeight="600" d:DesignWidth="800">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <!-- 3 Stat Cards Row -->
+            <RowDefinition Height="Auto"/>
+            <!-- Lower Detail Cards Row -->
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,16">
+            <TextBlock x:Name="DashHeadingTitle" Text="System Overview" FontSize="24" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
+            <TextBlock x:Name="DashHeadingSub" Text="Real-time hardware telemetry and background process monitoring" FontSize="13.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,4,0,0"/>
+        </StackPanel>
+
+        <!-- 3 Core Metric Cards (.card style, airy, clean) -->
+        <Grid Grid.Row="1" Margin="0,0,0,20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Card 1: CPU (Clickable -> Opens Task Manager) -->
+            <Border x:Name="DashCpuCard" Grid.Column="0" Background="{DynamicResource BrushBgSurface}" BorderBrush="{DynamicResource BrushBorderCard}" BorderThickness="1" CornerRadius="14" Padding="20" Margin="0,0,10,0">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock x:Name="DashCardCpuTitle" Text="PROCESSOR (CPU)" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextMuted}" VerticalAlignment="Center"/>
+                        <Border x:Name="BtnCpuAction" Cursor="Hand" MouseLeftButtonDown="CpuMetric_Click" ToolTip="Open Windows Task Manager" HorizontalAlignment="Right" Background="Transparent" Padding="4,2">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Data="{StaticResource IconCpu}" Width="13" Height="13" Fill="{DynamicResource BrushTextSecondary}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                <Path Data="{StaticResource IconArrowUpRight}" Width="10" Height="10" Fill="{DynamicResource BrushTextMuted}" Stretch="Uniform" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- Clickable Metric Zone -->
+                    <StackPanel x:Name="MetricCpuAction" Cursor="Hand" MouseLeftButtonDown="CpuMetric_Click" ToolTip="Open Windows Task Manager" Background="Transparent">
+                        <TextBlock x:Name="DashCpuVal" Text="0%" FontSize="36" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" Margin="0,10,0,6"/>
+                        <ProgressBar x:Name="DashCpuProgress" Style="{StaticResource ProgressBarMonochrome}" Value="0" Maximum="100" Margin="0,4,0,10"/>
+                    </StackPanel>
+
+                    <TextBlock x:Name="DashCpuSub" Text="Detecting processor..." FontSize="12" Foreground="{DynamicResource BrushTextSecondary}"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Card 2: RAM (Clickable -> Opens Process Manager sorted by RAM) -->
+            <Border x:Name="DashRamCard" Grid.Column="1" Background="{DynamicResource BrushBgSurface}" BorderBrush="{DynamicResource BrushBorderCard}" BorderThickness="1" CornerRadius="14" Padding="20" Margin="5,0">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock x:Name="DashCardRamTitle" Text="PHYSICAL MEMORY" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextMuted}" VerticalAlignment="Center"/>
+                        <Border x:Name="BtnRamAction" Cursor="Hand" MouseLeftButtonDown="RamMetric_Click" ToolTip="Open Process Manager (sorted by RAM)" HorizontalAlignment="Right" Background="Transparent" Padding="4,2">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Data="{StaticResource IconRam}" Width="13" Height="13" Fill="{DynamicResource BrushTextSecondary}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                <Path Data="{StaticResource IconArrowUpRight}" Width="10" Height="10" Fill="{DynamicResource BrushTextMuted}" Stretch="Uniform" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- Clickable Metric Zone -->
+                    <StackPanel x:Name="MetricRamAction" Cursor="Hand" MouseLeftButtonDown="RamMetric_Click" ToolTip="Open Process Manager (sorted by RAM)" Background="Transparent">
+                        <TextBlock x:Name="DashRamVal" Text="0%" FontSize="36" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" Margin="0,10,0,6"/>
+                        <ProgressBar x:Name="DashRamProgress" Style="{StaticResource ProgressBarMonochrome}" Value="0" Maximum="100" Margin="0,4,0,10"/>
+                    </StackPanel>
+
+                    <TextBlock x:Name="DashRamSub" Text="Used: 0 / 8.0 GB" FontSize="12" Foreground="{DynamicResource BrushTextSecondary}"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Card 3: Storage (Clickable -> Opens Explorer in System Drive) -->
+            <Border x:Name="DashDiskCCard" Grid.Column="2" Background="{DynamicResource BrushBgSurface}" BorderBrush="{DynamicResource BrushBorderCard}" BorderThickness="1" CornerRadius="14" Padding="20" Margin="10,0,0,0">
+                <StackPanel>
+                    <Grid>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock x:Name="DashDiskCTitle" Text="STORAGE (C:)" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextMuted}" VerticalAlignment="Center"/>
+                            <Button x:Name="BtnDashDiskDropdown" Style="{StaticResource BtnIconCircle}" Click="BtnDiskDropdown_Click" Margin="4,0,0,0" ToolTip="Select Drive">
+                                <Path Data="{StaticResource IconChevronDown}" Width="9" Height="9" Fill="{DynamicResource BrushTextSecondary}" Stretch="Uniform"/>
+                            </Button>
+                        </StackPanel>
+                        <Border x:Name="BtnDiskAction" Cursor="Hand" MouseLeftButtonDown="DiskCMetric_Click" ToolTip="Open drive in Windows Explorer" HorizontalAlignment="Right" Background="Transparent" Padding="4,2">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Path Data="{StaticResource IconHardDrive}" Width="13" Height="13" Fill="{DynamicResource BrushTextSecondary}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                <Path Data="{StaticResource IconArrowUpRight}" Width="10" Height="10" Fill="{DynamicResource BrushTextMuted}" Stretch="Uniform" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- Clickable Metric Zone -->
+                    <StackPanel x:Name="MetricDiskAction" Cursor="Hand" MouseLeftButtonDown="DiskCMetric_Click" ToolTip="Open drive in Windows Explorer" Background="Transparent">
+                        <TextBlock x:Name="DashDiskCVal" Text="0.0 GB" FontSize="36" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" Margin="0,10,0,6"/>
+                        <ProgressBar x:Name="DashDiskCProgress" Style="{StaticResource ProgressBarMonochrome}" Value="0" Maximum="100" Margin="0,4,0,10"/>
+                    </StackPanel>
+
+                    <TextBlock x:Name="DashDiskCSub" Text="Free 0.0 of 0.0 GB" FontSize="12" Foreground="{DynamicResource BrushTextSecondary}"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Lower Split Cards -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.3*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Left: Status & Environment -->
+            <Border Grid.Column="0" Background="{DynamicResource BrushBgSurface}" BorderBrush="{DynamicResource BrushBorderCard}" BorderThickness="1" CornerRadius="14" Padding="22" Margin="0,0,10,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock x:Name="DashEnvCardTitle" Grid.Row="0" Text="Gaming environment and storage status" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" Margin="0,0,0,16"/>
+
+                    <StackPanel Grid.Row="1">
+                        <!-- Row 1: Game Mode -->
+                        <Grid Margin="0,4,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
+                                    <Path Data="{StaticResource IconGamepad}" Width="13" Height="13" Fill="{DynamicResource BrushTextSecondary}" Stretch="Uniform" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="DashGameStatusTitle" Text="Game Process Priority" FontSize="12.5" FontWeight="Medium" Foreground="{DynamicResource BrushTextPrimary}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock x:Name="DashGameStatusDetail" Text="No games detected · Background monitoring active" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" Margin="21,0,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <Border Grid.Column="1" Background="{DynamicResource BrushBgInner}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="6" Padding="8,4" VerticalAlignment="Center">
+                                <TextBlock x:Name="DashGameBadge" Text="Waiting" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextSecondary}"/>
+                            </Border>
+                        </Grid>
+
+                        <Separator Background="{DynamicResource BrushBorderSubtle}" Margin="0,0,0,10"/>
+
+                        <!-- Row 2: Secondary Data Disk -->
+                        <Grid x:Name="DashDiskDRow" Margin="0,0,0,10" Cursor="Hand" MouseLeftButtonDown="DiskDMetric_Click" ToolTip="Click to open data drive in Windows Explorer">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
+                                    <Path Data="{StaticResource IconHardDrive}" Width="13" Height="13" Fill="{DynamicResource BrushTextSecondary}" Stretch="Uniform" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="DashDiskDTitle" Text="Data Drive" FontSize="12.5" FontWeight="Medium" Foreground="{DynamicResource BrushTextPrimary}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock x:Name="DashDiskDText" Text="Free: 0.0 GB" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" Margin="21,0,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <Border Grid.Column="1" Background="{DynamicResource BrushBgInner}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="6" Padding="8,4" VerticalAlignment="Center">
+                                <TextBlock x:Name="DashDiskDBadge" Text="Data Drive" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextSecondary}"/>
+                            </Border>
+                        </Grid>
+
+                        <Separator Background="{DynamicResource BrushBorderSubtle}" Margin="0,0,0,10"/>
+
+                        <!-- Row 3: Health Recommendation -->
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
+                                    <Path Data="{StaticResource IconCheckCircle}" Width="13" Height="13" Fill="{DynamicResource BrushTextSecondary}" Stretch="Uniform" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="DashHealthStatusTitle" Text="System Health Status" FontSize="12.5" FontWeight="Medium" Foreground="{DynamicResource BrushTextPrimary}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock x:Name="DashRecommendation" Text="Healthy" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" Margin="21,0,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <Border Grid.Column="1" Background="{DynamicResource BrushBgInner}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="6" Padding="8,4" VerticalAlignment="Center">
+                                <TextBlock x:Name="DashHealthBadge" Text="Healthy" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextSecondary}"/>
+                            </Border>
+                        </Grid>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Right: Actions Hub -->
+            <Border Grid.Column="1" Background="{DynamicResource BrushBgSurface}" BorderBrush="{DynamicResource BrushBorderCard}" BorderThickness="1" CornerRadius="14" Padding="22" Margin="10,0,0,0">
+                <StackPanel>
+                    <TextBlock x:Name="DashQuickActionsTitle" Text="Quick Actions" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" Margin="0,0,0,16"/>
+
+                    <!-- Primary Action -->
+                    <Button Style="{StaticResource BtnPrimaryWhite}" Click="BtnQuickPurge_Click" Margin="0,0,0,10" HorizontalContentAlignment="Center">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Path Data="{StaticResource IconBroom}" Width="13" Height="13" Fill="{DynamicResource BrushTextDark}" Stretch="Uniform" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="DashQuickPurgeRamText" Text="Flush RAM Cache" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+
+                    <Button Style="{StaticResource BtnPill}" Click="BtnToggleHud_Click" Margin="0,0,0,8" HorizontalContentAlignment="Left">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Path Data="{StaticResource IconPictureInPicture}" Width="13" Height="13" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="DashToggleHudText" Text="Toggle HUD Overlay" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+
+                    <Button Style="{StaticResource BtnPill}" Click="BtnCleanJunk_Click" HorizontalContentAlignment="Left">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Path Data="{StaticResource IconTrash}" Width="13" Height="13" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="DashCleanJunkText" Text="Clean Temporary Files" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

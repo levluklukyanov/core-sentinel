@@ -7,6 +7,8 @@ public partial class MainViewModel : ObservableObject
 {
     public OverviewViewModel Overview { get; } = new();
     public PurgeViewModel Purge { get; } = new();
+    public StorageViewModel Storage { get; } = new();
+    public GamesViewModel Games { get; } = new();
     public SettingsViewModel Settings { get; } = new();
 
     [ObservableProperty]
