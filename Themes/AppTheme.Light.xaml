@@ -10,6 +10,7 @@
     <Color x:Key="ColorBgSurface">#FFFFFF</Color>
     <Color x:Key="ColorBgSurfaceHover">#F1F2F5</Color>
     <Color x:Key="ColorBgInner">#F3F4F6</Color>
+    <Color x:Key="ColorBgElevated">#FFFFFF</Color>
     <Color x:Key="ColorBgButton">#EAECEF</Color>
     <Color x:Key="ColorBgButtonHover">#DFE2E6</Color>
 
@@ -31,6 +32,7 @@
     <SolidColorBrush x:Key="BrushBgSurface" Color="{StaticResource ColorBgSurface}"/>
     <SolidColorBrush x:Key="BrushBgSurfaceHover" Color="{StaticResource ColorBgSurfaceHover}"/>
     <SolidColorBrush x:Key="BrushBgInner" Color="{StaticResource ColorBgInner}"/>
+    <SolidColorBrush x:Key="BrushBgElevated" Color="{StaticResource ColorBgElevated}"/>
     <SolidColorBrush x:Key="BrushBgButton" Color="{StaticResource ColorBgButton}"/>
     <SolidColorBrush x:Key="BrushBgButtonHover" Color="{StaticResource ColorBgButtonHover}"/>
 
@@ -83,6 +85,7 @@
     <Geometry x:Key="IconClock">M8 3.5a.5.5 0 0 0-1 0V9a.5.5 0 0 0 .252.434l3.5 2a.5.5 0 0 0 .496-.868L8 8.71z M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m7-8A7 7 0 1 1 1 8a7 7 0 0 1 14 0</Geometry>
     <Geometry x:Key="IconPlus">M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z</Geometry>
     <Geometry x:Key="IconGripLines">M2.5 4h11a.75.75 0 0 1 0 1.5h-11a.75.75 0 0 1 0-1.5zm0 3.25h11a.75.75 0 0 1 0 1.5h-11a.75.75 0 0 1 0-1.5zm0 3.25h11a.75.75 0 0 1 0 1.5h-11a.75.75 0 0 1 0-1.5z</Geometry>
+    <Geometry x:Key="IconSlidersHorizontal">M11.5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3M1 3.5a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 0 1h-8a.5.5 0 0 1-.5-.5m10 0a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5M4.5 7a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3M1 8.5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5m5 0a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 0 1h-8a.5.5 0 0 1-.5-.5m5 3.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3M1 13.5a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 0 1h-8a.5.5 0 0 1-.5-.5m10 0a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5</Geometry>
     <Geometry x:Key="IconInfo">M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16m.93-9.412-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.47l-.451-.081.082-.381 2.29-.287zM8 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2</Geometry>
 
     <!-- Ultra-Thin Minimal ScrollBar -->
@@ -289,6 +292,41 @@
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="border" Property="Background" Value="{DynamicResource BrushBgSurface}"/>
                             <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Nav Item Button (Active) -->
+    <Style x:Key="BtnNavPillActive" TargetType="Button">
+        <Setter Property="FontFamily" Value="{DynamicResource FontMain}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Background" Value="{DynamicResource BrushBgSurface}"/>
+        <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}"/>
+        <Setter Property="Padding" Value="12,8"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="SnapsToDevicePixels" Value="True"/>
+        <Setter Property="UseLayoutRounding" Value="True"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="border" 
+                            Background="{TemplateBinding Background}" 
+                            BorderBrush="{TemplateBinding BorderBrush}" 
+                            BorderThickness="{TemplateBinding BorderThickness}" 
+                            CornerRadius="8" 
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"
+                                          TextElement.Foreground="{TemplateBinding Foreground}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="{DynamicResource BrushBgSurfaceHover}"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

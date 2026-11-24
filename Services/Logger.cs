@@ -72,10 +72,21 @@ public static class Logger
             try
             {
                 RotateIfNeeded(_crashLogFile);
-                string text = ex != null
-                    ? $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] CRASH: {message}\nException: {ex.GetType().FullName}: {ex.Message}\nStackTrace:\n{ex.StackTrace}\n\n"
-                    : $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] CRASH: {message}\n\n";
-                File.AppendAllText(_crashLogFile, text);
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] CRASH: {message}");
+                var cur = ex;
+                int depth = 0;
+                while (cur != null)
+                {
+                    sb.AppendLine($"--- Exception Level {depth} ---");
+                    sb.AppendLine($"Type: {cur.GetType().FullName}");
+                    sb.AppendLine($"Message: {cur.Message}");
+                    sb.AppendLine($"StackTrace:\n{cur.StackTrace}");
+                    cur = cur.InnerException;
+                    depth++;
+                }
+                sb.AppendLine();
+                File.AppendAllText(_crashLogFile, sb.ToString());
             }
             catch { }
         }

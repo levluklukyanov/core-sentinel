@@ -37,11 +37,15 @@ public partial class App : Application
             else
             {
                 Logger.LogCrash("Fatal Dispatcher Unhandled Exception", ex);
+                string details = ex.InnerException != null 
+                    ? $"{ex.Message}\n\nDetails: {ex.InnerException.Message}" 
+                    : ex.Message;
+
                 try
                 {
                     MessageBox.Show(
                         $"A critical error occurred in CoreSpectre.\n\n" +
-                        $"Error: {ex.Message}\n\n" +
+                        $"Error: {details}\n\n" +
                         $"Crash log saved to:\n{Logger.CrashLogFilePath}\n\n" +
                         $"The application will now shut down to prevent state corruption.",
                         "CoreSpectre - Critical Error",
