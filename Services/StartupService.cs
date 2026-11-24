@@ -55,7 +55,7 @@ public static class StartupService
                     ));
                 }
             }
-            catch { }
+            catch (Exception ex) { Logger.Debug("StartupService.cs: " + ex.Message); }
         }
 
         return entries.DistinctBy(e => e.Name).ToList();
@@ -79,7 +79,7 @@ public static class StartupService
                         set.Add(name);
                 }
             }
-            catch { }
+            catch (Exception ex) { Logger.Debug("StartupService.cs: " + ex.Message); }
         }
         return set;
     }

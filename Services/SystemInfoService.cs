@@ -141,7 +141,7 @@ public static class SystemInfoService
                 ));
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("SystemInfoService.cs: " + ex.Message); }
         return list;
     }
 
@@ -179,7 +179,7 @@ public static class SystemInfoService
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Logger.Debug("SystemInfoService.cs: " + ex.Message); }
 
             foreach (var drive in DriveInfo.GetDrives().Where(d => d.IsReady))
             {
@@ -206,7 +206,7 @@ public static class SystemInfoService
                 ));
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("SystemInfoService.cs: " + ex.Message); }
         return list;
     }
 
@@ -226,7 +226,7 @@ public static class SystemInfoService
                 );
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("SystemInfoService.cs: " + ex.Message); }
         return new MotherboardInfo("—", "—", "—", "—");
     }
 
@@ -251,7 +251,7 @@ public static class SystemInfoService
                 );
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("SystemInfoService.cs: " + ex.Message); }
         return new BiosInfo("—", "—", "—", "—");
     }
 
@@ -277,7 +277,7 @@ public static class SystemInfoService
                 );
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("SystemInfoService.cs: " + ex.Message); }
         return new OsInfo(
             "Windows",
             Environment.OSVersion.Version.ToString(),
@@ -314,7 +314,7 @@ public static class SystemInfoService
             foreach (ManagementObject obj in searcher.Get())
             {
                 ulong ram = 0;
-                try { ram = (ulong)(uint)(obj["AdapterRAM"] ?? 0u); } catch { }
+                try { ram = (ulong)(uint)(obj["AdapterRAM"] ?? 0u); } catch (Exception ex) { Logger.Debug("SystemInfoService.cs: " + ex.Message); }
                 list.Add(new GpuInfo(
                     Name: obj["Name"]?.ToString()?.Trim() ?? "—",
                     DriverVersion: obj["DriverVersion"]?.ToString() ?? "—",
@@ -323,7 +323,7 @@ public static class SystemInfoService
                 ));
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("SystemInfoService.cs: " + ex.Message); }
         return list;
     }
 
@@ -348,7 +348,7 @@ public static class SystemInfoService
                     : "—";
 
                 long speedBps = 0;
-                try { speedBps = nic.Speed; } catch { }
+                try { speedBps = nic.Speed; } catch (Exception ex) { Logger.Debug("SystemInfoService.cs: " + ex.Message); }
                 string gbps = isEn ? "Gbps" : "Гбит/с";
                 string mbps = isEn ? "Mbps" : "Мбит/с";
                 string kbps = isEn ? "Kbps" : "Кбит/с";
@@ -372,7 +372,7 @@ public static class SystemInfoService
                 });
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("SystemInfoService.cs: " + ex.Message); }
         return list;
     }
 

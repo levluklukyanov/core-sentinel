@@ -58,7 +58,10 @@ public static class SettingsPersistenceService
                 }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Logger.Warn($"Failed to load user settings: {ex.Message}");
+        }
 
         return new UserSettingsModel();
     }
@@ -77,6 +80,9 @@ public static class SettingsPersistenceService
             string json = JsonSerializer.Serialize(model, JsonOptions);
             File.WriteAllText(path, json);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Logger.Error($"Failed to save user settings: {ex.Message}", ex);
+        }
     }
 }

@@ -63,7 +63,7 @@ public static class HardwareTelemetry
                 return totalCores;
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("HardwareTelemetry.cs: " + ex.Message); }
 
         _cachedPhysicalCores = 0;
         return 0;
@@ -90,7 +90,7 @@ public static class HardwareTelemetry
                 return _cachedCpuName;
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("HardwareTelemetry.cs: " + ex.Message); }
 
         string? envCpu = Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER");
         _cachedCpuName = !string.IsNullOrWhiteSpace(envCpu) ? envCpu : "ЦП системы";
@@ -107,7 +107,7 @@ public static class HardwareTelemetry
                 return root.TrimEnd('\\', ':');
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("HardwareTelemetry.cs: " + ex.Message); }
         return "C";
     }
 
@@ -124,7 +124,7 @@ public static class HardwareTelemetry
                 return drives[0].Name.TrimEnd('\\', ':');
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("HardwareTelemetry.cs: " + ex.Message); }
         return "D";
     }
 
@@ -230,7 +230,7 @@ public static class HardwareTelemetry
                 {
                     string name = proc.ProcessName;
                     string title = "";
-                    try { title = proc.MainWindowTitle; } catch { }
+                    try { title = proc.MainWindowTitle; } catch (Exception ex) { Logger.Debug("HardwareTelemetry.cs: " + ex.Message); }
 
                     var (isGame, displayName) = GameSentinelService.ResolveGameIdentity(name, title, IsRussianLanguage);
                     if (isGame)

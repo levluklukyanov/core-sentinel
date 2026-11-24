@@ -270,7 +270,7 @@ public static class StorageService
                     binCount += c;
                 }
             }
-            catch { }
+            catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
         }
         targets.Add(new CleanableTarget(isEn ? "Windows Recycle Bin (All Drives)" : "Корзина Windows (Все диски)", "$Recycle.Bin", binBytes, binCount));
 
@@ -322,10 +322,10 @@ public static class StorageService
                 {
                     sub.Delete(true);
                 }
-                catch { }
+                catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
 
         return new CleanResult(freed, count, skipped);
     }
@@ -403,7 +403,7 @@ public static class StorageService
                 using var pStop = Process.Start(psiStop);
                 pStop?.WaitForExit(3000);
             }
-            catch { }
+            catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
 
             var r3 = CleanDirectoryContents(swDist);
             var r4 = CleanDirectoryContents(delivOpt);
@@ -417,7 +417,7 @@ public static class StorageService
                 using var pStart = Process.Start(psiStart);
                 pStart?.WaitForExit(3000);
             }
-            catch { }
+            catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
         }
         else
         {
@@ -476,7 +476,7 @@ public static class StorageService
             using var p = Process.Start(psi);
             if (p != null) await p.WaitForExitAsync();
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
 
         // Stage 5: Empty Recycle Bin via native Shell32 API (instant, no powershell overhead)
         logCallback(isEn 
@@ -501,7 +501,7 @@ public static class StorageService
                 using var p = Process.Start(psi);
                 if (p != null) await p.WaitForExitAsync();
             }
-            catch { }
+            catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
         }
 
         // Stage 6: Windows Component Store Cleanup (DISM)
@@ -545,7 +545,7 @@ public static class StorageService
                     catch (OperationCanceledException)
                     {
                         hasErrors = true;
-                        try { p.Kill(); } catch { }
+                        try { p.Kill(); } catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
                         logCallback(isEn 
                             ? "[DISM] Operation timed out (exceeded 120s)." 
                             : "[DISM] Операция прервана по тайм-ауту (более 120 сек).");
@@ -609,7 +609,7 @@ public static class StorageService
                 return p.ExitCode == 0;
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
         return false;
     }
 
@@ -624,7 +624,7 @@ public static class StorageService
                 return true;
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
         return false;
     }
 

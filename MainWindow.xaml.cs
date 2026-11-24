@@ -154,7 +154,10 @@ public partial class MainWindow : Window
 
             SettingsPersistenceService.Save(_settings);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Logger.Warn($"Failed to persist runtime settings: {ex.Message}");
+        }
     }
 
     #region Drive Dropdown & Switcher Logic
@@ -824,40 +827,47 @@ public partial class MainWindow : Window
 
     private async void BtnRemoveTab_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement fe && fe.Tag is TabItemModel tab)
+        try
         {
-            bool isEn = _currentLanguage == "EN";
-            string title = isEn ? "Remove Tab?" : "Удалить вкладку?";
-            string msg = isEn
-                ? $"Move tab '{tab.EnTitle}' to Tab Storage? You can restore it anytime in Settings."
-                : $"Переместить вкладку «{tab.RuTitle}» в Хранилище вкладок? Вы сможете вернуть её в любой момент через настройки.";
-            string confirm = isEn ? "Remove" : "Удалить";
-            string cancel = isEn ? "Cancel" : "Отмена";
-
-            bool ok = await ShowModernConfirmDialogAsync(title, msg, confirm, cancel, "IconClose");
-            if (!ok) return;
-
-            _activeTabs.Remove(tab);
-            if (!_vaultTabs.Contains(tab))
+            if (sender is FrameworkElement fe && fe.Tag is TabItemModel tab)
             {
-                _vaultTabs.Add(tab);
-            }
+                bool isEn = _currentLanguage == "EN";
+                string title = isEn ? "Remove Tab?" : "Удалить вкладку?";
+                string msg = isEn
+                    ? $"Move tab '{tab.EnTitle}' to Tab Storage? You can restore it anytime in Settings."
+                    : $"Переместить вкладку «{tab.RuTitle}» в Хранилище вкладок? Вы сможете вернуть её в любой момент через настройки.";
+                string confirm = isEn ? "Remove" : "Удалить";
+                string cancel = isEn ? "Cancel" : "Отмена";
 
-            if (_currentTabIndex == tab.TagIndex)
-            {
-                var nextTab = _activeTabs.FirstOrDefault();
-                if (nextTab != null)
+                bool ok = await ShowModernConfirmDialogAsync(title, msg, confirm, cancel, "IconClose");
+                if (!ok) return;
+
+                _activeTabs.Remove(tab);
+                if (!_vaultTabs.Contains(tab))
                 {
-                    HighlightTab(nextTab.TagIndex);
+                    _vaultTabs.Add(tab);
                 }
-            }
 
-            RebuildNavPills();
-            RefreshVaultUI();
-            SaveCurrentUserSettings();
-            StatusFooterText.Text = isEn
-                ? $"Tab '{tab.EnTitle}' moved to Tab Storage."
-                : $"Вкладка «{tab.RuTitle}» отправлена в Хранилище вкладок.";
+                if (_currentTabIndex == tab.TagIndex)
+                {
+                    var nextTab = _activeTabs.FirstOrDefault();
+                    if (nextTab != null)
+                    {
+                        HighlightTab(nextTab.TagIndex);
+                    }
+                }
+
+                RebuildNavPills();
+                RefreshVaultUI();
+                SaveCurrentUserSettings();
+                StatusFooterText.Text = isEn
+                    ? $"Tab '{tab.EnTitle}' moved to Tab Storage."
+                    : $"Вкладка «{tab.RuTitle}» отправлена в Хранилище вкладок.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to remove tab", ex);
         }
     }
 
@@ -1066,20 +1076,34 @@ public partial class MainWindow : Window
 
     #region RAM & Turbo Handlers
 
-    private void BtnQuickPurge_Click(object sender, RoutedEventArgs e)
+    private async void BtnQuickPurge_Click(object sender, RoutedEventArgs e)
     {
-        if (_isCpuPurgeMode)
-            ExecuteCpuOptimization();
-        else
-            ExecuteRamPurge();
+        try
+        {
+            if (_isCpuPurgeMode)
+                await ExecuteCpuOptimization();
+            else
+                ExecuteRamPurge();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Quick purge error", ex);
+        }
     }
 
-    private void BtnFullPurge_Click(object sender, RoutedEventArgs e)
+    private async void BtnFullPurge_Click(object sender, RoutedEventArgs e)
     {
-        if (_isCpuPurgeMode)
-            ExecuteCpuOptimization();
-        else
-            ExecuteRamPurge();
+        try
+        {
+            if (_isCpuPurgeMode)
+                await ExecuteCpuOptimization();
+            else
+                ExecuteRamPurge();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Full purge error", ex);
+        }
     }
 
     private void ExecuteRamPurge()
@@ -1114,7 +1138,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void ExecuteCpuOptimization()
+    private async Task ExecuteCpuOptimization()
     {
         if (_ramCooldownRemaining > 0) return;
 
@@ -1146,7 +1170,10 @@ public partial class MainWindow : Window
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        Logger.Debug($"Process priority adjustment skipped for {p.ProcessName}: {ex.Message}");
+                    }
                     finally { p.Dispose(); }
                 }
             });
@@ -1491,6 +1518,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            Logger.Error("Game scan failed", ex);
             InstalledScanStatusText.Text = isEn ? $"Scan failed: {ex.Message}" : $"Ошибка сканирования: {ex.Message}";
         }
         finally
@@ -1536,7 +1564,14 @@ public partial class MainWindow : Window
 
     private async void BtnScanJunk_Click(object sender, RoutedEventArgs e)
     {
-        await ScanJunkAsync(showLog: true, isManualClick: true);
+        try
+        {
+            await ScanJunkAsync(showLog: true, isManualClick: true);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Scan junk button click failed", ex);
+        }
     }
 
     private void LogStorage(string msg)
@@ -1614,6 +1649,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            Logger.Error("Storage scan error", ex);
             LogStorage($"[ERROR] Scan error: {ex.Message}");
         }
     }
@@ -1685,6 +1721,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            Logger.Error("System cleanup exception", ex);
             LogStorage($"[ERROR] Cleanup exception: {ex.Message}");
             StatusFooterText.Text = $"Cleanup error: {ex.Message}";
         }
@@ -1987,44 +2024,51 @@ public partial class MainWindow : Window
 
     private async void BtnResetSettings_Click(object sender, RoutedEventArgs e)
     {
-        bool isEn = _currentLanguage == "EN";
-        string msg = isEn 
-            ? "Are you sure you want to reset all parameters, alert thresholds and tab layouts to factory defaults?" 
-            : "Вы уверены, что хотите сбросить все параметры, пороги алертов и навигационные вкладки на значения по умолчанию?";
-        string title = isEn ? "Reset Confirmation" : "Подтверждение сброса";
-        string confirm = isEn ? "Reset" : "Сбросить";
-        string cancel = isEn ? "Cancel" : "Отмена";
+        try
+        {
+            bool isEn = _currentLanguage == "EN";
+            string msg = isEn 
+                ? "Are you sure you want to reset all parameters, alert thresholds and tab layouts to factory defaults?" 
+                : "Вы уверены, что хотите сбросить все параметры, пороги алертов и навигационные вкладки на значения по умолчанию?";
+            string title = isEn ? "Reset Confirmation" : "Подтверждение сброса";
+            string confirm = isEn ? "Reset" : "Сбросить";
+            string cancel = isEn ? "Cancel" : "Отмена";
 
-        bool ok = await ShowModernConfirmDialogAsync(title, msg, confirm, cancel, "IconArrowClockwise");
-        if (!ok) return;
+            bool ok = await ShowModernConfirmDialogAsync(title, msg, confirm, cancel, "IconArrowClockwise");
+            if (!ok) return;
 
-        SetLanguage("EN");
-        SetTheme(false);
-        SetTelemetryInterval(1.5);
-        SetDiskThreshold(7.0);
+            SetLanguage("EN");
+            SetTheme(false);
+            SetTelemetryInterval(1.5);
+            SetDiskThreshold(7.0);
 
-        _autoRamPurgeEnabled = true;
-        UpdateAutoRamVisual();
+            _autoRamPurgeEnabled = true;
+            UpdateAutoRamVisual();
 
-        _autoGamePriorityEnabled = true;
-        UpdateAutoGamePriorityVisual();
+            _autoGamePriorityEnabled = true;
+            UpdateAutoGamePriorityVisual();
 
-        if (SliderHudOpacity != null) SliderHudOpacity.Value = 90;
-        if (TxtHudOpacityVal != null) TxtHudOpacityVal.Text = "90%";
-        if (_hudWindow != null && _hudWindow.IsLoaded) _hudWindow.Opacity = 0.9;
+            if (SliderHudOpacity != null) SliderHudOpacity.Value = 90;
+            if (TxtHudOpacityVal != null) TxtHudOpacityVal.Text = "90%";
+            if (_hudWindow != null && _hudWindow.IsLoaded) _hudWindow.Opacity = 0.9;
 
-        if (ExpCustom != null && ExpCustom.IsExpanded && ExpCustom.Content is FrameworkElement c1) AnimateCollapse(ExpCustom, c1);
-        if (ExpMonitor != null && ExpMonitor.IsExpanded && ExpMonitor.Content is FrameworkElement c2) AnimateCollapse(ExpMonitor, c2);
-        if (ExpSysInfo != null && ExpSysInfo.IsExpanded && ExpSysInfo.Content is FrameworkElement c3) AnimateCollapse(ExpSysInfo, c3);
-        if (StickyAccordionBar != null) StickyAccordionBar.Visibility = Visibility.Collapsed;
-        SettingsScrollViewer?.ScrollToTop();
+            if (ExpCustom != null && ExpCustom.IsExpanded && ExpCustom.Content is FrameworkElement c1) AnimateCollapse(ExpCustom, c1);
+            if (ExpMonitor != null && ExpMonitor.IsExpanded && ExpMonitor.Content is FrameworkElement c2) AnimateCollapse(ExpMonitor, c2);
+            if (ExpSysInfo != null && ExpSysInfo.IsExpanded && ExpSysInfo.Content is FrameworkElement c3) AnimateCollapse(ExpSysInfo, c3);
+            if (StickyAccordionBar != null) StickyAccordionBar.Visibility = Visibility.Collapsed;
+            SettingsScrollViewer?.ScrollToTop();
 
-        _use12HourTime = true;
-        UpdateTimeFormatVisual();
+            _use12HourTime = true;
+            UpdateTimeFormatVisual();
 
-        ResetTabsToDefaults();
+            ResetTabsToDefaults();
 
-        StatusFooterText.Text = "Settings have been reset to factory defaults.";
+            StatusFooterText.Text = "Settings have been reset to factory defaults.";
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Reset settings failed", ex);
+        }
     }
 
     private void AnimateExpand(Expander exp, FrameworkElement content)
@@ -2327,7 +2371,10 @@ public partial class MainWindow : Window
                 BrandLogoImage.Source = new System.Windows.Media.Imaging.BitmapImage(
                     new Uri(light ? "logo_dark.png" : "logo.png", UriKind.Relative));
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Logger.Debug($"Brand logo image switch note: {ex.Message}");
+            }
         }
 
         var primaryStyle = (Style)FindResource("BtnPrimaryWhite");

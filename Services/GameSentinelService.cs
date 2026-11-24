@@ -132,7 +132,7 @@ public static class GameSentinelService
             {
                 string procName = proc.ProcessName;
                 string winTitle = "";
-                try { winTitle = proc.MainWindowTitle; } catch { }
+                try { winTitle = proc.MainWindowTitle; } catch (Exception ex) { Logger.Debug("GameSentinelService.cs: " + ex.Message); }
 
                 var (isGame, displayName) = ResolveGameIdentity(procName, winTitle, isRu);
                 if (!isGame) continue;
@@ -156,7 +156,7 @@ public static class GameSentinelService
                         _ => isRu ? "Обычный" : "Normal"
                     };
                 }
-                catch { }
+                catch (Exception ex) { Logger.Debug("GameSentinelService.cs: " + ex.Message); }
 
                 // Retrieve CPU estimation if sampled
                 double cpu = 0.0;
@@ -169,7 +169,7 @@ public static class GameSentinelService
                         cpu = match.CpuPercent;
                     }
                 }
-                catch { }
+                catch (Exception ex) { Logger.Debug("GameSentinelService.cs: " + ex.Message); }
 
                 result.Add(new ActiveGameInfo(
                     proc.Id,
@@ -211,7 +211,7 @@ public static class GameSentinelService
             {
                 string procName = proc.ProcessName;
                 string winTitle = "";
-                try { winTitle = proc.MainWindowTitle; } catch { }
+                try { winTitle = proc.MainWindowTitle; } catch (Exception ex) { Logger.Debug("GameSentinelService.cs: " + ex.Message); }
 
                 var (isGame, displayName) = ResolveGameIdentity(procName, winTitle, isRu);
                 if (isGame)
@@ -228,7 +228,7 @@ public static class GameSentinelService
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Logger.Debug("GameSentinelService.cs: " + ex.Message); }
             finally
             {
                 proc.Dispose();
@@ -307,7 +307,7 @@ public static class GameSentinelService
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Logger.Debug("GameSentinelService.cs: " + ex.Message); }
 
             // 2. Drive scans
             foreach (var drive in drives)
@@ -343,7 +343,7 @@ public static class GameSentinelService
                             CheckDir(list, seenPaths, sub, name, cat, letter, includeLaunchers);
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Logger.Debug("GameSentinelService.cs: " + ex.Message); }
                 }
 
                 // Steam libraries
@@ -366,7 +366,7 @@ public static class GameSentinelService
                                 CheckDir(list, seenPaths, sub, gName, "Steam", letter, includeLaunchers);
                             }
                         }
-                        catch { }
+                        catch (Exception ex) { Logger.Debug("GameSentinelService.cs: " + ex.Message); }
                     }
                 }
 
@@ -382,7 +382,7 @@ public static class GameSentinelService
                             CheckDir(list, seenPaths, sub, gName, "Xbox", letter, includeLaunchers);
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Logger.Debug("GameSentinelService.cs: " + ex.Message); }
                 }
 
                 // Epic Games
@@ -397,7 +397,7 @@ public static class GameSentinelService
                             CheckDir(list, seenPaths, sub, gName, "Epic Games", letter, includeLaunchers);
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Logger.Debug("GameSentinelService.cs: " + ex.Message); }
                 }
             }
 
@@ -428,10 +428,10 @@ public static class GameSentinelService
             var dir = new DirectoryInfo(folderPath);
             foreach (var f in dir.EnumerateFiles("*", SearchOption.AllDirectories))
             {
-                try { total += f.Length; } catch { }
+                try { total += f.Length; } catch (Exception ex) { Logger.Debug("GameSentinelService.cs: " + ex.Message); }
             }
         }
-        catch { }
+        catch (Exception ex) { Logger.Debug("GameSentinelService.cs: " + ex.Message); }
         return total;
     }
 }

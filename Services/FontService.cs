@@ -127,7 +127,10 @@ public static class FontService
                 return appDataFontsDir;
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Logger.Debug($"Font discovery fallback triggered: {ex.Message}");
+        }
 
         // Если есть хоть один файл в localFontsDir, возвращаем его
         if (Directory.Exists(localFontsDir)) return localFontsDir;

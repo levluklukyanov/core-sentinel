@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿using System;
+using System.IO;
 using System.Windows;
 using CoreSentinel.Services;
 
@@ -13,41 +14,59 @@ public partial class App : Application
     {
         // Инициализируем шрифты до создания главного окна
         FontService.Initialize();
+        Logger.Info("CoreSentinel application startup initialized.");
 
         base.OnStartup(e);
 
         DispatcherUnhandledException += (s, args) =>
         {
-            try
+            var ex = args.Exception;
+            Logger.Error($"Dispatcher unhandled exception: {ex.GetType().FullName}", ex);
+
+            // Determine if safe/ignorable UI exception
+            bool isBenign = ex is System.ComponentModel.Win32Exception ||
+                            !(ex is System.Windows.Markup.XamlParseException) &&
+                            (ex.Message.Contains("clipboard", StringComparison.OrdinalIgnoreCase) ||
+                             ex.Message.Contains("drag", StringComparison.OrdinalIgnoreCase));
+
+            if (isBenign)
             {
-                LogCrash($"[{DateTime.Now}] Dispatcher Exception:\n{args.Exception}\n\n");
+                Logger.Warn($"Non-fatal UI exception handled: {ex.Message}");
+                args.Handled = true;
             }
-            catch { }
-            args.Handled = true;
+            else
+            {
+                Logger.LogCrash("Fatal Dispatcher Unhandled Exception", ex);
+                try
+                {
+                    MessageBox.Show(
+                        $"A critical error occurred in CoreSentinel.\n\n" +
+                        $"Error: {ex.Message}\n\n" +
+                        $"Crash log saved to:\n{Logger.CrashLogFilePath}\n\n" +
+                        $"The application will now shut down to prevent state corruption.",
+                        "CoreSentinel - Critical Error",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+                catch (Exception dialogEx)
+                {
+                    Logger.Error("Failed to display crash dialog", dialogEx);
+                }
+
+                args.Handled = false;
+            }
         };
 
         AppDomain.CurrentDomain.UnhandledException += (s, args) =>
         {
-            try
+            if (args.ExceptionObject is Exception ex)
             {
-                LogCrash($"[{DateTime.Now}] Domain Exception:\n{args.ExceptionObject}\n\n");
+                Logger.LogCrash("Unhandled AppDomain Exception", ex);
             }
-            catch { }
+            else
+            {
+                Logger.LogCrash($"Unhandled AppDomain Object: {args.ExceptionObject}");
+            }
         };
     }
-
-    private static void LogCrash(string message)
-    {
-        try
-        {
-            string logDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "CoreSentinel");
-            Directory.CreateDirectory(logDir);
-            string crashFile = Path.Combine(logDir, "crash_log.txt");
-            File.AppendAllText(crashFile, message);
-        }
-        catch { }
-    }
 }
-
