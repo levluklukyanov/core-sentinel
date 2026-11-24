@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 
-namespace CoreSentinel.Services;
+namespace CoreSpectre.Services;
 
 public enum LogLevel
 {
@@ -23,7 +23,7 @@ public static class Logger
     {
         _logDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "CoreSentinel",
+            "CoreSpectre",
             "logs");
         _appLogFile = Path.Combine(_logDir, "app.log");
         _crashLogFile = Path.Combine(_logDir, "crash_log.txt");

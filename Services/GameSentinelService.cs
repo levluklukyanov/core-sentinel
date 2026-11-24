@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 
-namespace CoreSentinel.Services;
+namespace CoreSpectre.Services;
 
 public record ActiveGameInfo(
     int Pid,

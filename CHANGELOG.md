@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **CoreSentinel** will be documented in this file.
+All notable changes to **CoreSpectre** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
@@ -12,10 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Configurable C# Cleanup Engine**: Granular user selection of cleanup targets (Temporary Files, SoftwareDistribution cache, WER/CBS logs, DNS cache, Recycle Bin, DISM Component Store, DISM ResetBase) with persistent checkboxes.
 - **Cleanup Gear Menu & Target Sorting**: Added gear dropdown menu for cleanup customization and dynamic target list sorting (Size descending, Size ascending, Name A-Z) persisted in `user_settings.json`.
 - **System Restore Point & Rollback Integration**: Integrated automatic and manual Windows Restore Point creation (`Checkpoint-Computer`) and one-click access to the Windows System Restore wizard (`rstrui.exe`).
-- **Thread-Safe Logging with Auto-Rotation**: Implemented `Logger` writing to `%LOCALAPPDATA%\CoreSentinel\logs\app.log` and `crash_log.txt` with automatic 1 MB rotation to `.old`.
-- **AppData Settings & Portable Mode**: Configuration now persists safely in `%APPDATA%\CoreSentinel\user_settings.json`, with automatic migration from the program directory and support for `portable.flag`.
+- **Thread-Safe Logging with Auto-Rotation**: Implemented `Logger` writing to `%LOCALAPPDATA%\CoreSpectre\logs\app.log` and `crash_log.txt` with automatic 1 MB rotation to `.old`.
+- **AppData Settings & Portable Mode**: Configuration now persists safely in `%APPDATA%\CoreSpectre\user_settings.json`, with automatic migration from the program directory and support for `portable.flag`.
 - **Centralized Localization**: Introduced `LocalizationService` supporting dynamic runtime switching between English and Russian across all views.
-- **Unit Test Suite**: Added `CoreSentinel.Tests` (xUnit) testing file size formatting, safety defaults, settings serialization, launcher exclusions, and localization parity.
+- **Unit Test Suite**: Added `CoreSpectre.Tests` (xUnit) testing file size formatting, safety defaults, settings serialization, launcher exclusions, and localization parity.
 - **Automated GitHub Actions Release Pipeline**: Workflow `.github/workflows/release.yml` for automated testing, single-file compilation, and release packaging upon pushing `v*` tags.
 
 ### Changed
@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2026-11-15
 
 ### Added
-- Initial public release of CoreSentinel.
+- Initial public release of CoreSpectre.
 - Real-time hardware telemetry monitoring (CPU, RAM, Disks via WMI and Win32).
 - Native Win32 memory working set trimming (`EmptyWorkingSet`).
 - Game process detection and priority elevation engine.

@@ -4,9 +4,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using CoreSentinel.Services;
+using CoreSpectre.Services;
 
-namespace CoreSentinel.ViewModels;
+namespace CoreSpectre.ViewModels;
 
 public record CleanTargetItem(string Name, string Path, string FormattedSize, long Bytes);
 

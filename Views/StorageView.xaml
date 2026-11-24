@@ -1,4 +1,4 @@
-<UserControl x:Class="CoreSentinel.Views.StorageView"
+<UserControl x:Class="CoreSpectre.Views.StorageView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -121,7 +121,7 @@
                         </Button>
 
                         <!-- Relaunch as Admin Button -->
-                        <Button x:Name="BtnRelaunchAdmin" Style="{StaticResource BtnPill}" Click="BtnRelaunchAdmin_Click" Visibility="Collapsed" ToolTip="Relaunch CoreSentinel with Administrator privileges to unlock system caches">
+                        <Button x:Name="BtnRelaunchAdmin" Style="{StaticResource BtnPill}" Click="BtnRelaunchAdmin_Click" Visibility="Collapsed" ToolTip="Relaunch CoreSpectre with Administrator privileges to unlock system caches">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <Path Data="{StaticResource IconShield}" Width="12" Height="12" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
                                 <TextBlock x:Name="BtnRelaunchAdminText" Text="Run as Admin" VerticalAlignment="Center"/>

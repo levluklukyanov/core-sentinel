@@ -4,7 +4,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 
-namespace CoreSentinel.Services;
+namespace CoreSpectre.Services;
 
 public record CpuInfo(
     string Name,

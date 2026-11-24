@@ -1,8 +1,8 @@
 using System.Text.Json;
-using CoreSentinel.Services;
+using CoreSpectre.Services;
 using Xunit;
 
-namespace CoreSentinel.Tests;
+namespace CoreSpectre.Tests;
 
 public class SettingsPersistenceTests
 {

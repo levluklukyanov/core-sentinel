@@ -10,9 +10,9 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
-using CoreSentinel.Services;
+using CoreSpectre.Services;
 
-namespace CoreSentinel;
+namespace CoreSpectre;
 
 public partial class MainWindow : Window
 {
@@ -96,8 +96,8 @@ public partial class MainWindow : Window
         HighlightTab(0);
 
         ViewPurge.Log(LocalizationService.IsRussian
-            ? "CoreSentinel инициализирован. Фоновая телеметрия и мониторинг активны."
-            : "CoreSentinel initialized. Background telemetry and security monitoring active.");
+            ? "CoreSpectre инициализирован. Фоновая телеметрия и мониторинг активны."
+            : "CoreSpectre initialized. Background telemetry and security monitoring active.");
 
         _ = ViewStorage.ScanJunkAsync(showLog: false);
     }

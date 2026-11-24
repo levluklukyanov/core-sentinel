@@ -7,8 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <LangVersion>13</LangVersion>
-    <RootNamespace>CoreSentinel</RootNamespace>
-    <AssemblyName>CoreSentinel</AssemblyName>
+    <RootNamespace>CoreSpectre</RootNamespace>
+    <AssemblyName>CoreSpectre</AssemblyName>
     
     <!-- Single-File Executable Configuration -->
     <PublishSingleFile>true</PublishSingleFile>
@@ -35,10 +35,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="CoreSentinel.Tests\**" />
-    <EmbeddedResource Remove="CoreSentinel.Tests\**" />
-    <None Remove="CoreSentinel.Tests\**" />
-    <Page Remove="CoreSentinel.Tests\**" />
+    <Compile Remove="CoreSpectre.Tests\**" />
+    <EmbeddedResource Remove="CoreSpectre.Tests\**" />
+    <None Remove="CoreSpectre.Tests\**" />
+    <Page Remove="CoreSpectre.Tests\**" />
   </ItemGroup>
 
   <ItemGroup>

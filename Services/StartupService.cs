@@ -1,6 +1,6 @@
 using Microsoft.Win32;
 
-namespace CoreSentinel.Services;
+namespace CoreSpectre.Services;
 
 public record StartupEntry(
     string Name,

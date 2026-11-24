@@ -1,5 +1,5 @@
 @echo off
-:: CoreSentinel Standalone Deep Cleanup Script
+:: CoreSpectre Standalone Deep Cleanup Script
 :: Проверка прав администратора. Если их нет — запрашиваем автоматически.
 net session >nul 2>&1
 if %errorLevel% neq 0 (
@@ -10,12 +10,12 @@ if %errorLevel% neq 0 (
 chcp 65001 > nul
 
 echo ========================================================
-echo        CoreSentinel: Системная очистка Windows
+echo        CoreSpectre: Системная очистка Windows
 echo ========================================================
 echo.
 
 echo [0/6] Создание точки восстановления Windows для безопасного отката...
-powershell -NoProfile -Command "Checkpoint-Computer -Description 'CoreSentinel Before clean.bat' -RestorePointType 'MODIFY_SETTINGS' -ErrorAction SilentlyContinue" >nul 2>&1
+powershell -NoProfile -Command "Checkpoint-Computer -Description 'CoreSpectre Before clean.bat' -RestorePointType 'MODIFY_SETTINGS' -ErrorAction SilentlyContinue" >nul 2>&1
 
 echo [1/6] Очистка временных папок Temp...
 del /s /f /q "%TEMP%\*" 2>nul

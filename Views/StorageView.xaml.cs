@@ -7,10 +7,10 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
-using CoreSentinel.Services;
-using CoreSentinel.ViewModels;
+using CoreSpectre.Services;
+using CoreSpectre.ViewModels;
 
-namespace CoreSentinel.Views;
+namespace CoreSpectre.Views;
 
 public partial class StorageView : UserControl
 {
@@ -256,7 +256,7 @@ public partial class StorageView : UserControl
             string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? "";
             if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath))
             {
-                exePath = Path.Combine(AppContext.BaseDirectory, "CoreSentinel.exe");
+                exePath = Path.Combine(AppContext.BaseDirectory, "CoreSpectre.exe");
             }
 
             var psi = new ProcessStartInfo(exePath)

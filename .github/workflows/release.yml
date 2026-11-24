@@ -25,14 +25,14 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore dependencies
-        run: dotnet restore CoreSentinel.sln
+        run: dotnet restore CoreSpectre.sln
 
       - name: Run Unit Tests
-        run: dotnet test CoreSentinel.sln -c Release --no-restore --verbosity normal
+        run: dotnet test CoreSpectre.sln -c Release --no-restore --verbosity normal
 
       - name: Publish Single-File Executable
         run: |
-          dotnet publish CoreSentinel.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish
+          dotnet publish CoreSpectre.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish
 
       - name: Package Release Archive
         shell: pwsh
@@ -42,17 +42,17 @@ jobs:
             Copy-Item -Path clean.bat -Destination ./publish/clean.bat
           }
           # Create zip archive of the published release package
-          Compress-Archive -Path ./publish/* -DestinationPath ./CoreSentinel-win-x64.zip -Force
+          Compress-Archive -Path ./publish/* -DestinationPath ./CoreSpectre-win-x64.zip -Force
           # Copy standalone executable to root for direct download asset
-          Copy-Item -Path ./publish/CoreSentinel.exe -Destination ./CoreSentinel.exe -Force
+          Copy-Item -Path ./publish/CoreSpectre.exe -Destination ./CoreSpectre.exe -Force
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           files: |
-            CoreSentinel.exe
-            CoreSentinel-win-x64.zip
+            CoreSpectre.exe
+            CoreSpectre-win-x64.zip
           generate_release_notes: true
           draft: false
           prerelease: false

@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace CoreSentinel.Services;
+namespace CoreSpectre.Services;
 
 public record ProcessItemInfo
 {
@@ -33,7 +33,7 @@ public static class ProcessTrackerService
     private static readonly HashSet<string> CriticalProcessNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "system", "idle", "registry", "smss", "csrss", "wininit", "services", 
-        "lsass", "winlogon", "fontdrvhost", "dwm", "explorer", "coresentinel",
+        "lsass", "winlogon", "fontdrvhost", "dwm", "explorer", "corespectre",
         "svchost", "sihost", "audiodg", "spoolsv"
     };
 

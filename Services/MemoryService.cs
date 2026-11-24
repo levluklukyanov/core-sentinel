@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace CoreSentinel.Services;
+namespace CoreSpectre.Services;
 
 public record MemoryStatus(
     long TotalPhysicalBytes,

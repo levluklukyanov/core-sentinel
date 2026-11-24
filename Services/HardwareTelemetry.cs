@@ -3,7 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 
-namespace CoreSentinel.Services;
+namespace CoreSpectre.Services;
 
 public record TelemetrySnapshot(
     double CpuLoadPercent,

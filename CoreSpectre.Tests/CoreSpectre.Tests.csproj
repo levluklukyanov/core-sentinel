@@ -17,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\CoreSentinel.csproj" />
+    <ProjectReference Include="..\CoreSpectre.csproj" />
   </ItemGroup>
 
   <ItemGroup>

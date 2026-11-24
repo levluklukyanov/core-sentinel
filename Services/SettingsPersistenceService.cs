@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
-namespace CoreSentinel.Services;
+namespace CoreSpectre.Services;
 
 public class UserSettingsModel
 {
@@ -65,7 +65,7 @@ public static class SettingsPersistenceService
     /// <summary>
     /// Gets the target path to user_settings.json:
     /// - If portable.flag exists: in app directory (portable mode).
-    /// - Otherwise: in %APPDATA%\CoreSentinel\user_settings.json.
+    /// - Otherwise: in %APPDATA%\CoreSpectre\user_settings.json.
     /// </summary>
     public static string GetSettingsPath()
     {
@@ -75,12 +75,12 @@ public static class SettingsPersistenceService
         }
 
         string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        string coreSentinelDir = Path.Combine(appData, "CoreSentinel");
-        return Path.Combine(coreSentinelDir, "user_settings.json");
+        string coreSpectreDir = Path.Combine(appData, "CoreSpectre");
+        return Path.Combine(coreSpectreDir, "user_settings.json");
     }
 
     /// <summary>
-    /// Performs a one-time migration of user_settings.json from the app directory to %APPDATA%\CoreSentinel\
+    /// Performs a one-time migration of user_settings.json from the app directory to %APPDATA%\CoreSpectre\
     /// if the app is in standard mode and the target settings file does not yet exist.
     /// </summary>
     public static void EnsureMigration()
@@ -92,7 +92,7 @@ public static class SettingsPersistenceService
             string localLegacyPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "user_settings.json");
             string appDataPath = GetSettingsPath();
 
-            if (File.Exists(localLegacyPath) && !File.Exists(appDataPath))
+            if (!File.Exists(appDataPath) && File.Exists(localLegacyPath))
             {
                 string? targetDir = Path.GetDirectoryName(appDataPath);
                 if (!string.IsNullOrEmpty(targetDir) && !Directory.Exists(targetDir))

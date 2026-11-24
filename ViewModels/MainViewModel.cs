@@ -1,7 +1,7 @@
 using System;
 using CommunityToolkit.Mvvm.ComponentModel;
 
-namespace CoreSentinel.ViewModels;
+namespace CoreSpectre.ViewModels;
 
 public partial class MainViewModel : ObservableObject
 {
@@ -15,7 +15,7 @@ public partial class MainViewModel : ObservableObject
     private int _selectedTabIndex;
 
     [ObservableProperty]
-    private string _statusFooter = "CoreSentinel ready.";
+    private string _statusFooter = "CoreSpectre ready.";
 
     public MainViewModel()
     {

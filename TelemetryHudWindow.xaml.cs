@@ -4,9 +4,9 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
-using CoreSentinel.Services;
+using CoreSpectre.Services;
 
-namespace CoreSentinel;
+namespace CoreSpectre;
 
 public partial class TelemetryHudWindow : Window
 {

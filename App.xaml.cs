@@ -1,9 +1,9 @@
 ﻿using System;
 using System.IO;
 using System.Windows;
-using CoreSentinel.Services;
+using CoreSpectre.Services;
 
-namespace CoreSentinel;
+namespace CoreSpectre;
 
 /// <summary>
 /// Interaction logic for App.xaml
@@ -14,7 +14,7 @@ public partial class App : Application
     {
         // Инициализируем шрифты до создания главного окна
         FontService.Initialize();
-        Logger.Info("CoreSentinel application startup initialized.");
+        Logger.Info("CoreSpectre application startup initialized.");
 
         base.OnStartup(e);
 
@@ -40,11 +40,11 @@ public partial class App : Application
                 try
                 {
                     MessageBox.Show(
-                        $"A critical error occurred in CoreSentinel.\n\n" +
+                        $"A critical error occurred in CoreSpectre.\n\n" +
                         $"Error: {ex.Message}\n\n" +
                         $"Crash log saved to:\n{Logger.CrashLogFilePath}\n\n" +
                         $"The application will now shut down to prevent state corruption.",
-                        "CoreSentinel - Critical Error",
+                        "CoreSpectre - Critical Error",
                         MessageBoxButton.OK,
                         MessageBoxImage.Error);
                 }

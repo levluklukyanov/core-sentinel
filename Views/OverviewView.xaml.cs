@@ -2,9 +2,9 @@ using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using CoreSentinel.Services;
+using CoreSpectre.Services;
 
-namespace CoreSentinel.Views;
+namespace CoreSpectre.Views;
 
 public partial class OverviewView : UserControl
 {

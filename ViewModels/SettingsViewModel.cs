@@ -1,9 +1,9 @@
 using System;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using CoreSentinel.Services;
+using CoreSpectre.Services;
 
-namespace CoreSentinel.ViewModels;
+namespace CoreSpectre.ViewModels;
 
 public partial class SettingsViewModel : ObservableObject
 {

@@ -3,11 +3,11 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Media;
 
-namespace CoreSentinel.Services;
+namespace CoreSpectre.Services;
 
 /// <summary>
 /// Обеспечивает отказоустойчивую загрузку и мгновенное динамическое переключение
-/// шрифтов интерфейса CoreSentinel без перезапуска приложения.
+/// шрифтов интерфейса CoreSpectre без перезапуска приложения.
 /// </summary>
 public static class FontService
 {
@@ -85,7 +85,7 @@ public static class FontService
         // 2. Резервный путь в AppData пользователя (для переносимого single-file exe)
         string appDataFontsDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "CoreSentinel",
+            "CoreSpectre",
             "Fonts");
 
         if (DirectoryHasAllFonts(appDataFontsDir))

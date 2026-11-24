@@ -3,7 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 
-namespace CoreSentinel.Services;
+namespace CoreSpectre.Services;
 
 public record DiskInfo(
     string Name,
@@ -369,12 +369,12 @@ public static class StorageService
             logCallback(isEn 
                 ? "[0/6] Creating Windows System Restore Point for safe rollback..." 
                 : "[0/6] Создание системной точки восстановления Windows для безопасного отката...");
-            bool created = await CreateRestorePointAsync("CoreSentinel Before Deep Cleanup", isEn);
+            bool created = await CreateRestorePointAsync("CoreSpectre Before Deep Cleanup", isEn);
             if (created)
             {
                 logCallback(isEn 
-                    ? "[Restore Point] Successfully created 'CoreSentinel Before Deep Cleanup'." 
-                    : "[Точка восстановления] Успешно создана: 'CoreSentinel Before Deep Cleanup'.");
+                    ? "[Restore Point] Successfully created 'CoreSpectre Before Deep Cleanup'." 
+                    : "[Точка восстановления] Успешно создана: 'CoreSpectre Before Deep Cleanup'.");
             }
             else
             {

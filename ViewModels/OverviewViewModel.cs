@@ -1,8 +1,8 @@
 using System;
 using CommunityToolkit.Mvvm.ComponentModel;
-using CoreSentinel.Services;
+using CoreSpectre.Services;
 
-namespace CoreSentinel.ViewModels;
+namespace CoreSpectre.ViewModels;
 
 public partial class OverviewViewModel : ObservableObject
 {

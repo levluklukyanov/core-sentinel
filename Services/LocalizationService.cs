@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace CoreSentinel.Services;
+namespace CoreSpectre.Services;
 
 public static class LocalizationService
 {

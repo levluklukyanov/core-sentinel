@@ -1,20 +1,20 @@
-# CoreSentinel
+# CoreSpectre
 
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6)](https://github.com/levluklukyanov/core-sentinel)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6)](https://github.com/levluklukyanov/core-spectre)
 [![Framework](https://img.shields.io/badge/.NET-10.0%20WPF-512BD4)](https://dotnet.microsoft.com/)
 [![Language](https://img.shields.io/badge/C%23-13.0-239120)](https://docs.microsoft.com/dotnet/csharp/)
-[![Release](https://img.shields.io/badge/Release-v1.1.0-success)](https://github.com/levluklukyanov/core-sentinel/releases)
+[![Release](https://img.shields.io/badge/Release-v1.1.0-success)](https://github.com/levluklukyanov/core-spectre/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 High-performance Windows system utility, real-time hardware telemetry monitor, and gaming resource manager built with C# 13 and .NET 10 (WPF).
 
-![CoreSentinel Preview](docs/preview.png)
+![CoreSpectre Preview](docs/preview.png)
 
 ---
 
 ## Overview
 
-CoreSentinel provides real-time system monitoring, dual-engine memory and CPU optimization, game process prioritization, and disk maintenance within a single, lightweight desktop interface designed with engineering minimalism.
+CoreSpectre provides real-time system monitoring, dual-engine memory and CPU optimization, game process prioritization, and disk maintenance within a single, lightweight desktop interface designed with engineering minimalism.
 
 ## Features
 
@@ -43,27 +43,27 @@ CoreSentinel provides real-time system monitoring, dual-engine memory and CPU op
 - Dynamic runtime localization (English and Russian) across all views via `LocalizationService`.
 - Tab Vault system to hide, restore, and reorder navigation tabs.
 - Bundled system fonts: Golos Text, Inter, JetBrains Mono, Manrope, Onest.
-- Safe settings storage in `%APPDATA%\CoreSentinel\user_settings.json` with automatic legacy migration and portable mode (`portable.flag`).
+- Safe settings storage in `%APPDATA%\CoreSpectre\user_settings.json` with automatic legacy migration and portable mode (`portable.flag`).
 
 ### Architecture & Reliability
 - **Modular MVVM Structure:** Decoupled UserControls and dedicated ViewModels powered by `CommunityToolkit.Mvvm`.
-- **Thread-Safe Rotating Logging:** Comprehensive diagnostics at `%LOCALAPPDATA%\CoreSentinel\logs\app.log` and `crash_log.txt` with automatic 1 MB rotation (`.old`).
-- **Automated Unit Testing:** Dedicated test suite (`CoreSentinel.Tests`) with 32 automated xUnit tests validating size calculations, safety defaults, settings serialization, game detection, and launcher exclusions.
+- **Thread-Safe Rotating Logging:** Comprehensive diagnostics at `%LOCALAPPDATA%\CoreSpectre\logs\app.log` and `crash_log.txt` with automatic 1 MB rotation (`.old`).
+- **Automated Unit Testing:** Dedicated test suite (`CoreSpectre.Tests`) with 32 automated xUnit tests validating size calculations, safety defaults, settings serialization, game detection, and launcher exclusions.
 
 ---
 
 ## Memory Trimming & Honest Expectations
 
-CoreSentinel uses the native Win32 `EmptyWorkingSet` API to trim memory working sets. This function requests Windows to move unreferenced pages from physical RAM into the standby pool or pagefile.
+CoreSpectre uses the native Win32 `EmptyWorkingSet` API to trim memory working sets. This function requests Windows to move unreferenced pages from physical RAM into the standby pool or pagefile.
 
 - **Realistic Effect:** Trimming working sets provides an immediate, observable reduction in reported RAM usage, which can be useful before launching demanding workloads or games.
-- **No Magic Acceleration:** It does not magically accelerate Windows. As active applications demand their data, Windows will fault required pages back into physical RAM. During this transition, a brief increase in disk I/O may occur. CoreSentinel does not make unsubstantiated claims of "doubling PC speed".
+- **No Magic Acceleration:** It does not magically accelerate Windows. As active applications demand their data, Windows will fault required pages back into physical RAM. During this transition, a brief increase in disk I/O may occur. CoreSpectre does not make unsubstantiated claims of "doubling PC speed".
 
 ---
 
 ## What the App Modifies in the System
 
-CoreSentinel operates transparently and strictly modifies only documented system locations:
+CoreSpectre operates transparently and strictly modifies only documented system locations:
 
 ### 1. File System Cleanup Targets
 - **User Space (Standard Rights):**
@@ -77,7 +77,7 @@ CoreSentinel operates transparently and strictly modifies only documented system
   - `%SystemRoot%\SoftwareDistribution\DeliveryOptimization` (Peer-to-peer update distribution cache)
   - `%SystemRoot%\Logs\CBS` (Archived Component-Based Servicing logs; active `CBS.log` is strictly preserved)
   - `%ProgramData%\Microsoft\Windows\WER` (Machine-wide error report archives)
-  - Windows Component Store: `dism.exe /Online /Cleanup-Image /StartComponentCleanup` to reclaim superseded WinSxS payloads. Note: CoreSentinel does not execute `/ResetBase` by default to preserve update rollback capabilities.
+  - Windows Component Store: `dism.exe /Online /Cleanup-Image /StartComponentCleanup` to reclaim superseded WinSxS payloads. Note: CoreSpectre does not execute `/ResetBase` by default to preserve update rollback capabilities.
 
 ### 2. Windows Registry
 - **Startup Manager:**
@@ -92,13 +92,13 @@ CoreSentinel operates transparently and strictly modifies only documented system
 The core application is fully operational under a standard, non-elevated user account for telemetry, working set trimming, user temp cleanup, and HKCU startup management. Deep system maintenance (Windows Temp, SoftwareDistribution, CBS logs, DISM, and HKLM registry modifications) requires running as Administrator via the built-in "Run as Admin" button.
 
 ### 5. System Restore Points
-Before executing deep cleanup routines, CoreSentinel can trigger a native Windows System Restore checkpoint via PowerShell (`Checkpoint-Computer -Description 'CoreSentinel Before Deep Cleanup' -RestorePointType 'MODIFY_SETTINGS'`). This allows users to revert system state via `rstrui.exe` at any time.
+Before executing deep cleanup routines, CoreSpectre can trigger a native Windows System Restore checkpoint via PowerShell (`Checkpoint-Computer -Description 'CoreSpectre Before Deep Cleanup' -RestorePointType 'MODIFY_SETTINGS'`). This allows users to revert system state via `rstrui.exe` at any time.
 
 ---
 
 ## Windows SmartScreen and Antivirus Notice
 
-CoreSentinel is a free, open-source utility distributed without an expensive commercial Extended Validation (EV) Code Signing certificate. Because the binary interacts with Win32 process APIs, system cleanup paths, and registry autostart keys, Windows SmartScreen ("Windows protected your PC") or certain antivirus heuristics may display an alert upon first launch.
+CoreSpectre is a free, open-source utility distributed without an expensive commercial Extended Validation (EV) Code Signing certificate. Because the binary interacts with Win32 process APIs, system cleanup paths, and registry autostart keys, Windows SmartScreen ("Windows protected your PC") or certain antivirus heuristics may display an alert upon first launch.
 
 The entire source code is 100% open, auditable, and can be built directly from source using the instructions below.
 
@@ -106,8 +106,8 @@ The entire source code is 100% open, auditable, and can be built directly from s
 
 ## Installation
 
-1. Navigate to the [Releases](https://github.com/levluklukyanov/core-sentinel/releases) page.
-2. Download the standalone executable `CoreSentinel.exe`.
+1. Navigate to the [Releases](https://github.com/levluklukyanov/core-spectre/releases) page.
+2. Download the standalone executable `CoreSpectre.exe`.
 3. Launch the application.
 
 > **Note on executable size (~65 MB):**  
@@ -125,15 +125,15 @@ The entire source code is 100% open, auditable, and can be built directly from s
 
 ```bash
 # Clone the repository
-git clone https://github.com/levluklukyanov/core-sentinel.git
-cd core-sentinel
+git clone https://github.com/levluklukyanov/core-spectre.git
+cd core-spectre
 
 # Run unit test suite
-dotnet test CoreSentinel.sln -c Release
+dotnet test CoreSpectre.sln -c Release
 
 # Build the solution in Release configuration
-dotnet build CoreSentinel.sln -c Release
+dotnet build CoreSpectre.sln -c Release
 
 # Publish standalone single-file binary
-dotnet publish CoreSentinel.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
+dotnet publish CoreSpectre.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
 ```
