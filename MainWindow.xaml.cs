@@ -1725,6 +1725,20 @@ public partial class MainWindow : Window
         }
     }
 
+    private void BtnRollbackSystem_Click(object sender, RoutedEventArgs e)
+    {
+        bool isEn = _currentLanguage == "EN";
+        bool launched = StorageService.LaunchSystemRestore();
+        if (launched)
+        {
+            StatusFooterText.Text = isEn ? "Windows System Restore wizard launched." : "Мастер восстановления системы Windows запущен.";
+        }
+        else
+        {
+            StatusFooterText.Text = isEn ? "Could not launch System Restore wizard." : "Не удалось запустить мастер восстановления системы.";
+        }
+    }
+
     private void StartStorageCooldown(int seconds)
     {
         bool isEn = _currentLanguage == "EN";
@@ -2190,6 +2204,7 @@ public partial class MainWindow : Window
         CleanTargetsTitle.Text = isEn ? "SAFE CLEANUP TARGETS" : "ОБЛАСТИ БЕЗОПАСНОЙ ОЧИСТКИ";
         BtnScanJunkText.Text = isEn ? "Scan Cache" : "Сканировать кэш";
         if (BtnCleanSystemText != null) BtnCleanSystemText.Text = isEn ? "Clean System Cache" : "Очистить систему";
+        if (BtnRollbackSystemText != null) BtnRollbackSystemText.Text = isEn ? "Rollback" : "Откат системы";
         if (BtnRelaunchAdminText != null) BtnRelaunchAdminText.Text = isEn ? "Run as Admin" : "Запуск от админа";
         if (StorageLogTitle != null) StorageLogTitle.Text = isEn ? "ACTIVITY & CLEANUP CONSOLE" : "КОНСОЛЬ АКТИВНОСТИ И ОЧИСТКИ";
         if (StorageLogFooter != null && (StorageLogFooter.Text == "Ready" || StorageLogFooter.Text == "Готов к работе"))

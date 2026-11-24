@@ -340,6 +340,26 @@ public static class StorageService
         bool isAdmin = IsAdministrator();
 
         // Stage 1: Temp Folders
+        if (isAdmin)
+        {
+            logCallback(isEn 
+                ? "[0/6] Creating Windows System Restore Point for safe rollback..." 
+                : "[0/6] Создание системной точки восстановления Windows для безопасного отката...");
+            bool created = await CreateRestorePointAsync("CoreSentinel Before Deep Cleanup", isEn);
+            if (created)
+            {
+                logCallback(isEn 
+                    ? "[Restore Point] Successfully created 'CoreSentinel Before Deep Cleanup'." 
+                    : "[Точка восстановления] Успешно создана: 'CoreSentinel Before Deep Cleanup'.");
+            }
+            else
+            {
+                logCallback(isEn 
+                    ? "[Restore Point] Skipped (System Restore disabled or daily checkpoint limit reached)." 
+                    : "[Точка восстановления] Пропущено (защита системы отключена или сработал суточный лимит Windows).");
+            }
+        }
+
         logCallback(isEn 
             ? "[1/6] Cleaning temporary folders (%TEMP% and Windows Temp)..." 
             : "[1/6] Очистка временных папок (%TEMP% и Windows Temp)...");
@@ -566,6 +586,46 @@ public static class StorageService
         logCallback(summaryMessage);
 
         return new CleanResult(totalFreed, totalRemoved, totalSkipped, adminSkippedStages, hasErrors, summaryMessage);
+    }
+
+    public static async Task<bool> CreateRestorePointAsync(string description, bool isEn = false)
+    {
+        if (!IsAdministrator()) return false;
+
+        try
+        {
+            string psPath = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+            var psi = new ProcessStartInfo(psPath, $"-NoProfile -NonInteractive -Command \"Checkpoint-Computer -Description '{description}' -RestorePointType 'MODIFY_SETTINGS'\"")
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            using var p = Process.Start(psi);
+            if (p != null)
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await p.WaitForExitAsync(cts.Token);
+                return p.ExitCode == 0;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    public static bool LaunchSystemRestore()
+    {
+        try
+        {
+            string rstruiPath = Path.Combine(Environment.SystemDirectory, "rstrui.exe");
+            if (File.Exists(rstruiPath))
+            {
+                Process.Start(new ProcessStartInfo(rstruiPath) { UseShellExecute = true });
+                return true;
+            }
+        }
+        catch { }
+        return false;
     }
 
     public static List<LargeDirectory> ScanLargeDirectories(string? driveLetter = null, int maxResults = 8)

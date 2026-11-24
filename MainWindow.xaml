@@ -563,6 +563,12 @@
                                             <TextBlock x:Name="BtnCleanSystemText" Text="Clean System Cache" VerticalAlignment="Center"/>
                                         </StackPanel>
                                     </Button>
+                                    <Button x:Name="BtnRollbackSystem" Style="{StaticResource BtnPill}" Click="BtnRollbackSystem_Click" Margin="10,0,0,0" ToolTip="Launch Windows System Restore (rstrui.exe) to roll back any system changes">
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Path Data="{StaticResource IconArrowUUpLeft}" Width="12" Height="12" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="BtnRollbackSystemText" Text="Rollback" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
                                     <Button x:Name="BtnRelaunchAdmin" Style="{StaticResource BtnPill}" Click="BtnRelaunchAdmin_Click" Margin="10,0,0,0" Visibility="Collapsed" ToolTip="Relaunch CoreSentinel with Administrator privileges to unlock system caches">
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                             <Path Data="{StaticResource IconShield}" Width="12" Height="12" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
