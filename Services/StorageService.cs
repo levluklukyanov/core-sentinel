@@ -33,6 +33,16 @@ public record CleanResult(
     string SummaryMessage = ""
 );
 
+public record StorageCleanupOptions(
+    bool CleanTemp = true,
+    bool CleanSoftwareDistribution = true,
+    bool CleanLogsAndReports = true,
+    bool CleanDnsCache = true,
+    bool CleanRecycleBin = false,
+    bool CleanDismComponentCleanup = true,
+    bool CleanDismResetBase = false
+);
+
 public record LargeDirectory(
     string Path,
     long SizeBytes,
@@ -330,8 +340,22 @@ public static class StorageService
         return new CleanResult(freed, count, skipped);
     }
 
-    public static async Task<CleanResult> ExecuteDeepCleanupAsync(bool isEn, Action<string> logCallback)
+    public static async Task<CleanResult> ExecuteDeepCleanupAsync(bool isEn, Action<string> logCallback, StorageCleanupOptions? options = null)
     {
+        if (options == null)
+        {
+            var s = SettingsPersistenceService.Load();
+            options = new StorageCleanupOptions(
+                s.CleanTempFiles,
+                s.CleanSoftwareDistribution,
+                s.CleanLogsAndReports,
+                s.CleanDnsCache,
+                s.CleanRecycleBin,
+                s.CleanDismComponentCleanup,
+                s.CleanDismResetBase
+            );
+        }
+
         long totalFreed = 0;
         int totalRemoved = 0;
         int totalSkipped = 0;
@@ -339,7 +363,7 @@ public static class StorageService
         bool hasErrors = false;
         bool isAdmin = IsAdministrator();
 
-        // Stage 1: Temp Folders
+        // Stage 0: Restore Point creation
         if (isAdmin)
         {
             logCallback(isEn 
@@ -360,139 +384,144 @@ public static class StorageService
             }
         }
 
-        logCallback(isEn 
-            ? "[1/6] Cleaning temporary folders (%TEMP% and Windows Temp)..." 
-            : "[1/6] Очистка временных папок (%TEMP% и Windows Temp)...");
-
-        string userTemp = Path.GetTempPath();
-        var r1 = CleanDirectoryContents(userTemp);
-        totalFreed += r1.BytesFreed;
-        totalRemoved += r1.FilesRemoved;
-        totalSkipped += r1.FilesSkipped;
-
-        string winTemp = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp");
-        if (isAdmin)
+        // Stage 1: Temp Folders
+        if (options.CleanTemp)
         {
-            var r2 = CleanDirectoryContents(winTemp);
-            totalFreed += r2.BytesFreed;
-            totalRemoved += r2.FilesRemoved;
-            totalSkipped += r2.FilesSkipped;
+            logCallback(isEn 
+                ? "[1/6] Cleaning temporary folders (%TEMP% and Windows Temp)..." 
+                : "[1/6] Очистка временных папок (%TEMP% и Windows Temp)...");
+
+            string userTemp = Path.GetTempPath();
+            var r1 = CleanDirectoryContents(userTemp);
+            totalFreed += r1.BytesFreed;
+            totalRemoved += r1.FilesRemoved;
+            totalSkipped += r1.FilesSkipped;
+
+            string winTemp = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp");
+            if (isAdmin)
+            {
+                var r2 = CleanDirectoryContents(winTemp);
+                totalFreed += r2.BytesFreed;
+                totalRemoved += r2.FilesRemoved;
+                totalSkipped += r2.FilesSkipped;
+            }
+            else
+            {
+                logCallback(isEn 
+                    ? "[Windows Temp] Skipped: administrator privileges required." 
+                    : "[Windows Temp] Пропущено: нужны права администратора.");
+                adminSkippedStages++;
+            }
         }
         else
         {
-            logCallback(isEn 
-                ? "[Windows Temp] Skipped: administrator privileges required." 
-                : "[Windows Temp] Пропущено: нужны права администратора.");
-            adminSkippedStages++;
+            logCallback(isEn
+                ? "[1/6] Temporary folders: Skipped by user configuration."
+                : "[1/6] Временные папки: Пропущено по настройке пользователя.");
         }
 
         // Stage 2: Windows Update & Delivery Optimization
-        string swDist = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "Download");
-        string delivOpt = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "DeliveryOptimization");
-
-        if (isAdmin)
+        if (options.CleanSoftwareDistribution)
         {
-            logCallback(isEn 
-                ? "[2/6] Cleaning Windows Update and Delivery Optimization caches..." 
-                : "[2/6] Очистка кэша обновлений Windows и Delivery Optimization...");
+            string swDist = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "Download");
+            string delivOpt = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "DeliveryOptimization");
 
-            // Temporarily unhook Windows Update service to release file locks on downloaded updates
-            try
+            if (isAdmin)
             {
-                var psiStop = new ProcessStartInfo("net.exe", "stop wuauserv") { CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden };
-                using var pStop = Process.Start(psiStop);
-                pStop?.WaitForExit(3000);
+                logCallback(isEn 
+                    ? "[2/6] Cleaning Windows Update and Delivery Optimization caches..." 
+                    : "[2/6] Очистка кэша обновлений Windows и Delivery Optimization...");
+
+                // Temporarily unhook Windows Update service to release file locks on downloaded updates
+                try
+                {
+                    var psiStop = new ProcessStartInfo("net.exe", "stop wuauserv") { CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden };
+                    using var pStop = Process.Start(psiStop);
+                    pStop?.WaitForExit(3000);
+                }
+                catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
+
+                var r3 = CleanDirectoryContents(swDist);
+                var r4 = CleanDirectoryContents(delivOpt);
+                totalFreed += r3.BytesFreed + r4.BytesFreed;
+                totalRemoved += r3.FilesRemoved + r4.FilesRemoved;
+                totalSkipped += r3.FilesSkipped + r4.FilesSkipped;
+
+                try
+                {
+                    var psiStart = new ProcessStartInfo("net.exe", "start wuauserv") { CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden };
+                    using var pStart = Process.Start(psiStart);
+                    pStart?.WaitForExit(3000);
+                }
+                catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
             }
-            catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
-
-            var r3 = CleanDirectoryContents(swDist);
-            var r4 = CleanDirectoryContents(delivOpt);
-            totalFreed += r3.BytesFreed + r4.BytesFreed;
-            totalRemoved += r3.FilesRemoved + r4.FilesRemoved;
-            totalSkipped += r3.FilesSkipped + r4.FilesSkipped;
-
-            try
+            else
             {
-                var psiStart = new ProcessStartInfo("net.exe", "start wuauserv") { CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden };
-                using var pStart = Process.Start(psiStart);
-                pStart?.WaitForExit(3000);
+                logCallback(isEn 
+                    ? "[SoftwareDistribution] Skipped: administrator privileges required." 
+                    : "[SoftwareDistribution] Пропущено: нужны права администратора.");
+                adminSkippedStages++;
             }
-            catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
         }
         else
         {
-            logCallback(isEn 
-                ? "[SoftwareDistribution] Skipped: administrator privileges required." 
-                : "[SoftwareDistribution] Пропущено: нужны права администратора.");
-            adminSkippedStages++;
+            logCallback(isEn
+                ? "[2/6] Windows Update cache: Skipped by user configuration."
+                : "[2/6] Кэш обновлений Windows: Пропущено по настройке пользователя.");
         }
 
         // Stage 3: Error Reports and Diagnostic Logs (excluding active CBS.log)
-        logCallback(isEn 
-            ? "[3/6] Clearing error reports and system diagnostic logs..." 
-            : "[3/6] Очистка отчетов об ошибках и логов...");
-
-        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        string progData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
-        var r5 = CleanDirectoryContents(Path.Combine(localAppData, "CrashDumps"));
-        var r6 = CleanDirectoryContents(Path.Combine(localAppData, "Microsoft", "Windows", "WER", "ReportArchive"));
-        var r7 = CleanDirectoryContents(Path.Combine(localAppData, "Microsoft", "Windows", "WER", "ReportQueue"));
-        var r8 = CleanDirectoryContents(Path.Combine(progData, "Microsoft", "Windows", "WER", "ReportArchive"));
-        var r9 = CleanDirectoryContents(Path.Combine(progData, "Microsoft", "Windows", "WER", "ReportQueue"));
-        totalFreed += r5.BytesFreed + r6.BytesFreed + r7.BytesFreed + r8.BytesFreed + r9.BytesFreed;
-        totalRemoved += r5.FilesRemoved + r6.FilesRemoved + r7.FilesRemoved + r8.FilesRemoved + r9.FilesRemoved;
-        totalSkipped += r5.FilesSkipped + r6.FilesSkipped + r7.FilesSkipped + r8.FilesSkipped + r9.FilesSkipped;
-
-        string cbsLogs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Logs", "CBS");
-        if (isAdmin)
+        if (options.CleanLogsAndReports)
         {
-            var r10 = CleanDirectoryContents(cbsLogs);
-            totalFreed += r10.BytesFreed;
-            totalRemoved += r10.FilesRemoved;
-            totalSkipped += r10.FilesSkipped;
+            logCallback(isEn 
+                ? "[3/6] Clearing error reports and system diagnostic logs..." 
+                : "[3/6] Очистка отчетов об ошибках и логов...");
+
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string progData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            var r5 = CleanDirectoryContents(Path.Combine(localAppData, "CrashDumps"));
+            var r6 = CleanDirectoryContents(Path.Combine(localAppData, "Microsoft", "Windows", "WER", "ReportArchive"));
+            var r7 = CleanDirectoryContents(Path.Combine(localAppData, "Microsoft", "Windows", "WER", "ReportQueue"));
+            var r8 = CleanDirectoryContents(Path.Combine(progData, "Microsoft", "Windows", "WER", "ReportArchive"));
+            var r9 = CleanDirectoryContents(Path.Combine(progData, "Microsoft", "Windows", "WER", "ReportQueue"));
+            totalFreed += r5.BytesFreed + r6.BytesFreed + r7.BytesFreed + r8.BytesFreed + r9.BytesFreed;
+            totalRemoved += r5.FilesRemoved + r6.FilesRemoved + r7.FilesRemoved + r8.FilesRemoved + r9.FilesRemoved;
+            totalSkipped += r5.FilesSkipped + r6.FilesSkipped + r7.FilesSkipped + r8.FilesSkipped + r9.FilesSkipped;
+
+            string cbsLogs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Logs", "CBS");
+            if (isAdmin)
+            {
+                var r10 = CleanDirectoryContents(cbsLogs);
+                totalFreed += r10.BytesFreed;
+                totalRemoved += r10.FilesRemoved;
+                totalSkipped += r10.FilesSkipped;
+            }
+            else
+            {
+                logCallback(isEn 
+                    ? "[CBS Logs] Skipped: administrator privileges required." 
+                    : "[CBS Logs] Пропущено: нужны права администратора.");
+                adminSkippedStages++;
+            }
         }
         else
         {
-            logCallback(isEn 
-                ? "[CBS Logs] Skipped: administrator privileges required." 
-                : "[CBS Logs] Пропущено: нужны права администратора.");
-            adminSkippedStages++;
+            logCallback(isEn
+                ? "[3/6] Error reports and CBS logs: Skipped by user configuration."
+                : "[3/6] Отчеты об ошибках и логи CBS: Пропущено по настройке пользователя.");
         }
 
         // Stage 4: DNS Cache Flush
-        logCallback(isEn 
-            ? "[4/6] Flushing network DNS resolver cache..." 
-            : "[4/6] Сброс сетевого DNS-кэша...");
-
-        try
+        if (options.CleanDnsCache)
         {
-            string ipconfigPath = Path.Combine(Environment.SystemDirectory, "ipconfig.exe");
-            var psi = new ProcessStartInfo(ipconfigPath, "/flushdns")
-            {
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
-            using var p = Process.Start(psi);
-            if (p != null) await p.WaitForExitAsync();
-        }
-        catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
+            logCallback(isEn 
+                ? "[4/6] Flushing network DNS resolver cache..." 
+                : "[4/6] Сброс сетевого DNS-кэша...");
 
-        // Stage 5: Empty Recycle Bin via native Shell32 API (instant, no powershell overhead)
-        logCallback(isEn 
-            ? "[5/6] Emptying Windows Recycle Bin across all drives..." 
-            : "[5/6] Очистка Корзины на всех накопителях...");
-
-        try
-        {
-            SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
-        }
-        catch
-        {
             try
             {
-                string psPath = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
-                var psi = new ProcessStartInfo(psPath, "-NoProfile -NonInteractive -Command \"Clear-RecycleBin -Confirm:$false -ErrorAction SilentlyContinue\"")
+                string ipconfigPath = Path.Combine(Environment.SystemDirectory, "ipconfig.exe");
+                var psi = new ProcessStartInfo(ipconfigPath, "/flushdns")
                 {
                     CreateNoWindow = true,
                     UseShellExecute = false,
@@ -503,69 +532,123 @@ public static class StorageService
             }
             catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
         }
-
-        // Stage 6: Windows Component Store Cleanup (DISM)
-        logCallback(isEn 
-            ? "[6/6] Cleaning Windows Component Store (DISM)..." 
-            : "[6/6] Очистка хранилища компонентов Windows (DISM)...");
-
-        if (isAdmin)
+        else
         {
+            logCallback(isEn
+                ? "[4/6] DNS resolver cache: Skipped by user configuration."
+                : "[4/6] Сетевой DNS-кэш: Пропущено по настройке пользователя.");
+        }
+
+        // Stage 5: Empty Recycle Bin via native Shell32 API (instant, no powershell overhead)
+        if (options.CleanRecycleBin)
+        {
+            logCallback(isEn 
+                ? "[5/6] Emptying Windows Recycle Bin across all drives..." 
+                : "[5/6] Очистка Корзины на всех накопителях...");
+
             try
             {
-                string dismPath = Path.Combine(Environment.SystemDirectory, "dism.exe");
-                var psi = new ProcessStartInfo(dismPath, "/Online /Cleanup-Image /StartComponentCleanup")
-                {
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                };
-
-                using var p = Process.Start(psi);
-                if (p != null)
-                {
-                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-                    try
-                    {
-                        await p.WaitForExitAsync(cts.Token);
-                        if (p.ExitCode != 0)
-                        {
-                            hasErrors = true;
-                            logCallback(isEn 
-                                ? $"[DISM] Failed with ExitCode {p.ExitCode}." 
-                                : $"[DISM] Завершился с ошибкой (код выхода: {p.ExitCode}).");
-                        }
-                        else
-                        {
-                            logCallback(isEn 
-                                ? "[DISM] Component cleanup completed successfully." 
-                                : "[DISM] Очистка хранилища компонентов успешно завершена.");
-                        }
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        hasErrors = true;
-                        try { p.Kill(); } catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
-                        logCallback(isEn 
-                            ? "[DISM] Operation timed out (exceeded 120s)." 
-                            : "[DISM] Операция прервана по тайм-ауту (более 120 сек).");
-                    }
-                }
+                SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
             }
-            catch (Exception ex)
+            catch
             {
-                hasErrors = true;
-                logCallback(isEn 
-                    ? $"[DISM] Execution error: {ex.Message}" 
-                    : $"[DISM] Ошибка запуска DISM: {ex.Message}");
+                try
+                {
+                    string psPath = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+                    var psi = new ProcessStartInfo(psPath, "-NoProfile -NonInteractive -Command \"Clear-RecycleBin -Confirm:$false -ErrorAction SilentlyContinue\"")
+                    {
+                        CreateNoWindow = true,
+                        UseShellExecute = false,
+                        WindowStyle = ProcessWindowStyle.Hidden
+                    };
+                    using var p = Process.Start(psi);
+                    if (p != null) await p.WaitForExitAsync();
+                }
+                catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
             }
         }
         else
         {
+            logCallback(isEn
+                ? "[5/6] Recycle Bin: Skipped by user configuration (default: off)."
+                : "[5/6] Корзина: Пропущено по настройке пользователя (по умолчанию выкл).");
+        }
+
+        // Stage 6: Windows Component Store Cleanup (DISM)
+        if (options.CleanDismComponentCleanup)
+        {
+            string dismArgs = options.CleanDismResetBase
+                ? "/Online /Cleanup-Image /StartComponentCleanup /ResetBase"
+                : "/Online /Cleanup-Image /StartComponentCleanup";
+
             logCallback(isEn 
-                ? "[DISM] Skipped: administrator privileges required." 
-                : "[DISM] Пропущено: нужны права администратора.");
-            adminSkippedStages++;
+                ? $"[6/6] Cleaning Windows Component Store (DISM{(options.CleanDismResetBase ? " with /ResetBase" : "")})..." 
+                : $"[6/6] Очистка хранилища компонентов Windows (DISM{(options.CleanDismResetBase ? " с /ResetBase" : "")})...");
+
+            if (isAdmin)
+            {
+                try
+                {
+                    string dismPath = Path.Combine(Environment.SystemDirectory, "dism.exe");
+                    var psi = new ProcessStartInfo(dismPath, dismArgs)
+                    {
+                        CreateNoWindow = true,
+                        UseShellExecute = false,
+                        WindowStyle = ProcessWindowStyle.Hidden
+                    };
+
+                    using var p = Process.Start(psi);
+                    if (p != null)
+                    {
+                        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(180));
+                        try
+                        {
+                            await p.WaitForExitAsync(cts.Token);
+                            if (p.ExitCode != 0)
+                            {
+                                hasErrors = true;
+                                logCallback(isEn 
+                                    ? $"[DISM] Failed with ExitCode {p.ExitCode}." 
+                                    : $"[DISM] Завершился с ошибкой (код выхода: {p.ExitCode}).");
+                            }
+                            else
+                            {
+                                logCallback(isEn 
+                                    ? "[DISM] Component cleanup completed successfully." 
+                                    : "[DISM] Очистка хранилища компонентов успешно завершена.");
+                            }
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            hasErrors = true;
+                            try { p.Kill(); } catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
+                            logCallback(isEn 
+                                ? "[DISM] Operation timed out (exceeded 180s)." 
+                                : "[DISM] Операция прервана по тайм-ауту (более 180 сек).");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    hasErrors = true;
+                    logCallback(isEn 
+                        ? $"[DISM] Execution error: {ex.Message}" 
+                        : $"[DISM] Ошибка запуска DISM: {ex.Message}");
+                }
+            }
+            else
+            {
+                logCallback(isEn 
+                    ? "[DISM] Skipped: administrator privileges required." 
+                    : "[DISM] Пропущено: нужны права администратора.");
+                adminSkippedStages++;
+            }
+        }
+        else
+        {
+            logCallback(isEn
+                ? "[6/6] DISM Component Cleanup: Skipped by user configuration."
+                : "[6/6] Очистка компонентов DISM: Пропущено по настройке пользователя.");
         }
 
         // Format honest summary message
