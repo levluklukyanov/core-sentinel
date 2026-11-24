@@ -41,7 +41,7 @@ public partial class TelemetryHudWindow : Window
         var sample = HardwareTelemetry.Sample();
 
         HudCpuText.Text = $"{sample.CpuLoadPercent:0}%";
-        HudRamText.Text = $"{sample.RamUsedPercent:0}%";
+        HudRamText.Text = sample.RamTotalBytes > 0 ? $"{sample.RamUsedPercent:0}%" : "N/A";
         HudDiskLabel.Text = $"{sample.SystemDriveLetter}: ";
         HudDiskText.Text = $"{sample.DiskCFreeGb:0.#}G";
 

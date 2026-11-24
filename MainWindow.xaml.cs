@@ -239,7 +239,6 @@ public partial class MainWindow : Window
 
         // Quick badges
         QuickCpuText.Text = $"{sample.CpuLoadPercent:0}%";
-        QuickRamText.Text = $"{sample.RamUsedPercent:0}%";
         QuickDiskCLabel.Text = isEn ? $"Drive {sys}: " : $"Диск {sys}: ";
         QuickDiskCText.Text = isEn ? $"{sample.DiskCFreeGb:0.#} GB" : $"{sample.DiskCFreeGb:0.#} ГБ";
 
@@ -250,26 +249,48 @@ public partial class MainWindow : Window
             ? $"{HardwareTelemetry.GetProcessorName()} · {Environment.ProcessorCount} threads"
             : $"{HardwareTelemetry.GetProcessorName()} · {Environment.ProcessorCount} потоков";
 
-        // Dashboard RAM
-        DashRamVal.Text = $"{sample.RamUsedPercent:0}%";
-        DashRamProgress.Value = sample.RamUsedPercent;
-        double usedGb = (double)sample.RamUsedBytes / (1024 * 1024 * 1024);
-        double totalGb = (double)sample.RamTotalBytes / (1024 * 1024 * 1024);
-        DashRamSub.Text = isEn
-            ? $"Used: {usedGb:0.##} / {totalGb:0.##} GB"
-            : $"Занято: {usedGb:0.##} / {totalGb:0.##} ГБ";
-
-        // RAM / CPU Tab Detail
-        if (!_isCpuPurgeMode)
+        // Dashboard RAM & Detail
+        if (sample.RamTotalBytes > 0)
         {
-            RamDetailTotal.Text = isEn ? $"{totalGb:0.##} GB" : $"{totalGb:0.##} ГБ";
-            RamDetailUsed.Text = isEn ? $"{usedGb:0.##} GB ({sample.RamUsedPercent:0}%)" : $"{usedGb:0.##} ГБ ({sample.RamUsedPercent:0}%)";
-            RamDetailAvail.Text = isEn ? $"{(totalGb - usedGb):0.##} GB" : $"{(totalGb - usedGb):0.##} ГБ";
+            QuickRamText.Text = $"{sample.RamUsedPercent:0}%";
+            DashRamVal.Text = $"{sample.RamUsedPercent:0}%";
+            DashRamProgress.Value = sample.RamUsedPercent;
+            double usedGb = (double)sample.RamUsedBytes / (1024 * 1024 * 1024);
+            double totalGb = (double)sample.RamTotalBytes / (1024 * 1024 * 1024);
+            DashRamSub.Text = isEn
+                ? $"Used: {usedGb:0.##} / {totalGb:0.##} GB"
+                : $"Занято: {usedGb:0.##} / {totalGb:0.##} ГБ";
+
+            if (!_isCpuPurgeMode)
+            {
+                RamDetailTotal.Text = isEn ? $"{totalGb:0.##} GB" : $"{totalGb:0.##} ГБ";
+                RamDetailUsed.Text = isEn ? $"{usedGb:0.##} GB ({sample.RamUsedPercent:0}%)" : $"{usedGb:0.##} ГБ ({sample.RamUsedPercent:0}%)";
+                RamDetailAvail.Text = isEn ? $"{(totalGb - usedGb):0.##} GB" : $"{(totalGb - usedGb):0.##} ГБ";
+            }
         }
         else
         {
+            QuickRamText.Text = "N/A";
+            DashRamVal.Text = "N/A";
+            DashRamProgress.Value = 0;
+            DashRamSub.Text = isEn ? "Memory data unavailable" : "Данные ОЗУ недоступны";
+
+            if (!_isCpuPurgeMode)
+            {
+                RamDetailTotal.Text = "N/A";
+                RamDetailUsed.Text = "N/A";
+                RamDetailAvail.Text = "N/A";
+            }
+        }
+
+        // CPU Purge Mode Detail
+        if (_isCpuPurgeMode)
+        {
             RamDetailTotal.Text = HardwareTelemetry.GetProcessorName();
-            RamDetailUsed.Text = $"{Environment.ProcessorCount / 2}C / {Environment.ProcessorCount}T";
+            int cores = HardwareTelemetry.GetPhysicalCoreCount();
+            RamDetailUsed.Text = cores > 0 
+                ? $"{cores}C / {Environment.ProcessorCount}T" 
+                : $"{Environment.ProcessorCount}T";
             RamDetailAvail.Text = $"{sample.CpuLoadPercent:0.#}%";
         }
 
@@ -1134,17 +1155,24 @@ public partial class MainWindow : Window
             HardwareTelemetry.Sample(); // Reset sample baseline after intensive process scan
             await Task.Delay(800);
             double cpuAfter = HardwareTelemetry.Sample().CpuLoadPercent;
-            if (cpuAfter >= cpuBefore)
-            {
-                cpuAfter = Math.Max(5.0, Math.Round(cpuBefore * 0.75, 0));
-            }
 
             string nowTime = FormatTimeLog(DateTime.Now);
-            string logMsg = isEn
-                ? $"[{nowTime}] CPU Optimization completed. Balanced background tasks ({optimizedCount} adjusted). CPU Load: was {cpuBefore:0}%, now {cpuAfter:0}%."
-                : $"[{nowTime}] Оптимизация ЦП завершена. Нормализованы фоновые процессы (скорректировано {optimizedCount}). Загрузка ЦП: было {cpuBefore:0}%, стало {cpuAfter:0}%.";
+            string logMsg;
+            if (cpuAfter < cpuBefore)
+            {
+                logMsg = isEn
+                    ? $"[{nowTime}] CPU Optimization completed. Balanced background tasks ({optimizedCount} adjusted). CPU Load: was {cpuBefore:0}%, now {cpuAfter:0}%."
+                    : $"[{nowTime}] Оптимизация ЦП завершена. Нормализованы фоновые процессы (скорректировано {optimizedCount}). Загрузка ЦП: было {cpuBefore:0}%, стало {cpuAfter:0}%.";
+                StatusFooterText.Text = isEn ? "CPU optimization completed." : "Оптимизация ЦП завершена.";
+            }
+            else
+            {
+                logMsg = isEn
+                    ? $"[{nowTime}] CPU Optimization completed. Balanced background tasks ({optimizedCount} adjusted). CPU load did not change (was {cpuBefore:0}%, now {cpuAfter:0}%)."
+                    : $"[{nowTime}] Оптимизация ЦП завершена. Нормализованы фоновые процессы (скорректировано {optimizedCount}). Загрузка ЦП не изменилась (было {cpuBefore:0}%, стало {cpuAfter:0}%).";
+                StatusFooterText.Text = isEn ? "CPU load did not change." : "Загрузка ЦП не изменилась.";
+            }
             LogRam(logMsg);
-            StatusFooterText.Text = isEn ? "CPU optimization completed." : "Оптимизация ЦП завершена.";
         }
         catch (Exception ex)
         {
@@ -1278,7 +1306,11 @@ public partial class MainWindow : Window
             if (BtnFullPurgeIcon != null) BtnFullPurgeIcon.Data = (Geometry)FindResource("IconCpu");
             if (RamDetailHeader != null) RamDetailHeader.Text = isEn ? "CPU SPECIFICATION" : "СПЕЦИФИКАЦИЯ ПРОЦЕССОРА";
             if (RamTotalLabel != null) RamTotalLabel.Text = isEn ? "Model:" : "Модель:";
-            if (RamUsedLabel != null) RamUsedLabel.Text = isEn ? "Cores / Threads:" : "Ядра / Потоки:";
+            int cores = HardwareTelemetry.GetPhysicalCoreCount();
+            if (RamUsedLabel != null)
+                RamUsedLabel.Text = isEn
+                    ? (cores > 0 ? "Cores / Threads:" : "Logical Threads:")
+                    : (cores > 0 ? "Ядра / Потоки:" : "Логические потоки:");
             if (RamAvailLabel != null) RamAvailLabel.Text = isEn ? "Current Load:" : "Текущая нагрузка:";
             if (RamLogTitle != null) RamLogTitle.Text = isEn ? "CPU OPTIMIZATION LOG" : "ЖУРНАЛ ОПТИМИЗАЦИИ ЦП";
         }

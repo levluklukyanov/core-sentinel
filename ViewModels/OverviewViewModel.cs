@@ -53,10 +53,18 @@ public partial class OverviewViewModel : ObservableObject
         CpuLoadPercent = Math.Round(sample.CpuLoadPercent, 1);
         FormattedCpu = $"{Math.Round(sample.CpuLoadPercent)}%";
 
-        RamUsedPercent = Math.Round(sample.RamUsedPercent, 1);
-        double ramUsedGb = sample.RamUsedBytes / (1024.0 * 1024.0 * 1024.0);
-        double ramTotalGb = sample.RamTotalBytes / (1024.0 * 1024.0 * 1024.0);
-        FormattedRam = $"{ramUsedGb:F1} / {ramTotalGb:F1} GB";
+        if (sample.RamTotalBytes > 0)
+        {
+            RamUsedPercent = Math.Round(sample.RamUsedPercent, 1);
+            double ramUsedGb = sample.RamUsedBytes / (1024.0 * 1024.0 * 1024.0);
+            double ramTotalGb = sample.RamTotalBytes / (1024.0 * 1024.0 * 1024.0);
+            FormattedRam = $"{ramUsedGb:F1} / {ramTotalGb:F1} GB";
+        }
+        else
+        {
+            RamUsedPercent = 0.0;
+            FormattedRam = "N/A";
+        }
 
         DriveLetter = watchedDrive;
         bool isWatchedD = string.Equals(watchedDrive, "D", StringComparison.OrdinalIgnoreCase) && sample.HasSecondaryDataDrive;

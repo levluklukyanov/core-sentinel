@@ -42,6 +42,32 @@ public static class HardwareTelemetry
     private static double _lastCpuUsage = 0.0;
     private static readonly object _syncLock = new();
     private static string? _cachedCpuName = null;
+    private static int? _cachedPhysicalCores = null;
+
+    public static int GetPhysicalCoreCount()
+    {
+        if (_cachedPhysicalCores.HasValue)
+            return _cachedPhysicalCores.Value;
+
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher("SELECT NumberOfCores FROM Win32_Processor");
+            int totalCores = 0;
+            foreach (var item in searcher.Get())
+            {
+                totalCores += Convert.ToInt32(item["NumberOfCores"] ?? 0);
+            }
+            if (totalCores > 0)
+            {
+                _cachedPhysicalCores = totalCores;
+                return totalCores;
+            }
+        }
+        catch { }
+
+        _cachedPhysicalCores = 0;
+        return 0;
+    }
 
     private static readonly string[] KnownGames = new[]
     {

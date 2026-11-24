@@ -69,8 +69,8 @@ public static class MemoryService
             return new MemoryStatus(total, avail, used, Math.Round(percent, 1));
         }
 
-        // Fallback
-        return new MemoryStatus(8L * 1024 * 1024 * 1024, 4L * 1024 * 1024 * 1024, 4L * 1024 * 1024 * 1024, 50.0);
+        // Honest unavailable status: do not report fake 8 GB / 50%
+        return new MemoryStatus(0L, 0L, 0L, 0.0);
     }
 
     public static PurgeResult PurgeMemory()
