@@ -32,6 +32,7 @@ public class UserSettingsModel
     public bool CleanDismComponentCleanup { get; set; } = true;
     public bool CleanDismResetBase { get; set; } = false;
     public string StorageSortMode { get; set; } = "SizeDesc";
+    public List<string> DisabledCleanupTargets { get; set; } = new();
 }
 
 public static class SettingsPersistenceService
@@ -122,6 +123,10 @@ public static class SettingsPersistenceService
                 var model = JsonSerializer.Deserialize<UserSettingsModel>(json, JsonOptions);
                 if (model != null)
                 {
+                    model.ActiveTabs ??= new List<string> { "overview", "ram", "storage", "games", "settings" };
+                    model.VaultTabs ??= new List<string>();
+                    model.DisabledCleanupTargets ??= new List<string>();
+
                     // Safety: ensure settings tab is never completely lost
                     if (!model.ActiveTabs.Contains("settings"))
                     {

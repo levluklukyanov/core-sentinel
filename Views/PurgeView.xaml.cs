@@ -64,22 +64,35 @@ public partial class PurgeView : UserControl
             RamHeroIcon.Data = (Geometry)FindResource("IconRam");
             BtnFullPurgeIcon.Data = (Geometry)FindResource("IconBroom");
         }
+
+        BtnRamOpenInspectorText.Text = isEn ? "Open Task Manager" : "Открыть диспетчер задач";
     }
 
     public void UpdateMetrics(double ramUsedGb, double ramTotalGb, double cpuPercent, string cpuName, int physicalCores, int logicalCores)
     {
+        bool isEn = LocalizationService.IsEnglish;
         if (_isCpuPurgeMode)
         {
-            RamDetailTotal.Text = string.IsNullOrWhiteSpace(cpuName) ? "Detecting..." : cpuName;
-            RamDetailUsed.Text = $"{physicalCores} / {logicalCores}";
-            RamDetailAvail.Text = $"{cpuPercent:0}%";
+            RamDetailTotal.Text = string.IsNullOrWhiteSpace(cpuName) ? (isEn ? "Detecting..." : "Определение...") : cpuName;
+            RamDetailUsed.Text = physicalCores > 0 ? $"{physicalCores} / {logicalCores}" : $"{logicalCores}";
+            RamDetailAvail.Text = $"{cpuPercent:0.#}%";
         }
         else
         {
-            double availGb = Math.Max(0, ramTotalGb - ramUsedGb);
-            RamDetailTotal.Text = $"{ramTotalGb:0.00} GB";
-            RamDetailUsed.Text = $"{ramUsedGb:0.00} GB";
-            RamDetailAvail.Text = $"{availGb:0.00} GB";
+            if (ramTotalGb > 0)
+            {
+                string unit = isEn ? "GB" : "ГБ";
+                double availGb = Math.Max(0, ramTotalGb - ramUsedGb);
+                RamDetailTotal.Text = $"{ramTotalGb:0.00} {unit}";
+                RamDetailUsed.Text = $"{ramUsedGb:0.00} {unit}";
+                RamDetailAvail.Text = $"{availGb:0.00} {unit}";
+            }
+            else
+            {
+                RamDetailTotal.Text = "N/A";
+                RamDetailUsed.Text = "N/A";
+                RamDetailAvail.Text = "N/A";
+            }
         }
     }
 

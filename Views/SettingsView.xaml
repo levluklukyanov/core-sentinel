@@ -212,7 +212,7 @@
                             </Grid>
 
                             <!-- Auto Game Priority -->
-                            <Grid Margin="0,0,0,12">
+                            <Grid Margin="0,0,0,16">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
@@ -223,24 +223,6 @@
                                 </StackPanel>
                                 <Button Grid.Column="1" x:Name="BtnToggleAutoGamePriority" Style="{StaticResource BtnPrimaryWhite}" Click="BtnToggleAutoGamePriority_Click" Padding="14,6" VerticalAlignment="Center">
                                     <TextBlock x:Name="TxtAutoGamePriorityStatus" Text="Enabled" FontSize="12" FontWeight="SemiBold"/>
-                                </Button>
-                            </Grid>
-
-                            <!-- RAM Manual Purge -->
-                            <Grid Margin="0,0,0,16">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                    <TextBlock x:Name="ManualRamTitle" Text="Manual memory optimization:" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
-                                    <TextBlock x:Name="SettingsRamStatusText" Text="Last optimization: waiting for trigger" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,10,0"/>
-                                </StackPanel>
-                                <Button Grid.Column="1" x:Name="BtnSettingsPurgeRam" Style="{StaticResource BtnPill}" Click="BtnSettingsPurgeRam_Click" Padding="14,6" VerticalAlignment="Center">
-                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                        <Path Data="{StaticResource IconLightning}" Width="12" Height="12" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                        <TextBlock x:Name="BtnSettingsPurgeRamText" Text="Purge RAM" VerticalAlignment="Center"/>
-                                    </StackPanel>
                                 </Button>
                             </Grid>
 

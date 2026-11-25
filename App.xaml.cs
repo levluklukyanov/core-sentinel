@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using CoreSpectre.Services;
 
@@ -10,13 +11,33 @@ namespace CoreSpectre;
 /// </summary>
 public partial class App : Application
 {
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
+        base.OnStartup(e);
+
+        int workerIdx = Array.FindIndex(e.Args, a => string.Equals(a, "--elevated-worker", StringComparison.OrdinalIgnoreCase));
+        if (workerIdx >= 0 && workerIdx + 1 < e.Args.Length)
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            string jobPath = e.Args[workerIdx + 1];
+            int code = 0;
+            try
+            {
+                Logger.Info($"CoreSpectre elevated cleanup worker started for job: {jobPath}");
+                code = await StorageService.RunElevatedWorkerAsync(jobPath);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("Elevated cleanup worker failed", ex);
+                code = 1;
+            }
+            Shutdown(code);
+            return;
+        }
+
         // Инициализируем шрифты до создания главного окна
         FontService.Initialize();
         Logger.Info("CoreSpectre application startup initialized.");
-
-        base.OnStartup(e);
 
         DispatcherUnhandledException += (s, args) =>
         {
@@ -72,5 +93,9 @@ public partial class App : Application
                 Logger.LogCrash($"Unhandled AppDomain Object: {args.ExceptionObject}");
             }
         };
+
+        var mainWindow = new MainWindow();
+        MainWindow = mainWindow;
+        mainWindow.Show();
     }
 }

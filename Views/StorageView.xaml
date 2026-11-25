@@ -67,32 +67,59 @@
                     </Grid>
 
                     <ListBox Grid.Row="1" x:Name="CleanTargetsList">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Padding" Value="0"/>
+                                <Setter Property="Margin" Value="0,0,0,6"/>
+                                <Setter Property="Focusable" Value="False"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <ContentPresenter/>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <Border Background="{DynamicResource BrushBgBase}" BorderBrush="{DynamicResource BrushBorderCard}" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,6">
+                                <Border Background="{DynamicResource BrushBgBase}" BorderBrush="{DynamicResource BrushBorderCard}" BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Opacity" Value="1"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsSelected}" Value="False">
+                                                    <Setter Property="Opacity" Value="0.5"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
                                     <Grid>
                                         <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
 
-                                        <Path Grid.Column="0" Data="{StaticResource IconTrash}" Width="13" Height="13" Fill="{DynamicResource BrushTextSecondary}" Stretch="Uniform" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                        <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected, Mode=OneWay}" Click="TargetCheckBox_Click" Tag="{Binding Key}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,12,0" ToolTip="Include or exclude this target from cleanup"/>
 
-                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource BrushTextPrimary}"/>
-                                            <TextBlock Text="{Binding Path}" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" Margin="0,2,0,0"/>
+                                        <Path Grid.Column="1" Data="{StaticResource IconTrash}" Width="13" Height="13" Fill="{DynamicResource BrushTextSecondary}" Stretch="Uniform" Margin="0,0,10,0" VerticalAlignment="Center"/>
+
+                                        <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="0,0,10,0">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource BrushTextPrimary}" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding Path}" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
                                         </StackPanel>
 
-                                        <TextBlock Grid.Column="2" Text="{Binding FormattedSize}" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource BrushTextPrimary}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="3" Text="{Binding FormattedSize}" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource BrushTextPrimary}" VerticalAlignment="Center"/>
                                     </Grid>
                                 </Border>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
 
-                    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,12,0,0">
-                        <Button x:Name="BtnScanJunk" Style="{StaticResource BtnPill}" Click="BtnScanJunk_Click" Margin="0,0,8,0">
+                    <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button x:Name="BtnScanJunk" Style="{StaticResource BtnPill}" Click="BtnScanJunk_Click" Margin="0,0,8,4">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <Path Data="{StaticResource IconArrowClockwise}" Width="12" Height="12" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
                                 <TextBlock x:Name="BtnScanJunkText" Text="Scan Cache" VerticalAlignment="Center"/>
@@ -100,34 +127,21 @@
                         </Button>
 
                         <!-- Clean Button -->
-                        <Button x:Name="BtnCleanSystem" Style="{StaticResource BtnPrimaryWhite}" Click="BtnCleanSystem_Click">
+                        <Button x:Name="BtnCleanSystem" Style="{StaticResource BtnPrimaryWhite}" Click="BtnCleanSystem_Click" Margin="0,0,8,4">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <Path Data="{StaticResource IconTrash}" Width="12" Height="12" Fill="{DynamicResource BrushTextDark}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
                                 <TextBlock x:Name="BtnCleanSystemText" Text="Clean System Cache" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
 
-                        <!-- Gear Button for Cleanup Options (User request & Task 7) -->
-                        <Button x:Name="BtnCleanSettingsGear" Style="{StaticResource BtnIconCircle}" Click="BtnCleanSettingsGear_Click" Margin="6,0,8,0" Width="32" Height="32" ToolTip="Configure Cleanup Targets">
-                            <Path Data="{StaticResource IconGear}" Width="13" Height="13" Fill="{DynamicResource BrushTextSecondary}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Button>
-
                         <!-- Rollback Button -->
-                        <Button x:Name="BtnRollbackSystem" Style="{StaticResource BtnPill}" Click="BtnRollbackSystem_Click" Margin="0,0,8,0" ToolTip="Launch Windows System Restore (rstrui.exe) to roll back any system changes">
+                        <Button x:Name="BtnRollbackSystem" Style="{StaticResource BtnPill}" Click="BtnRollbackSystem_Click" Margin="0,0,0,4" ToolTip="Launch Windows System Restore (rstrui.exe) to roll back any system changes">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <Path Data="{StaticResource IconArrowUUpLeft}" Width="12" Height="12" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
                                 <TextBlock x:Name="BtnRollbackSystemText" Text="Rollback" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
-
-                        <!-- Relaunch as Admin Button -->
-                        <Button x:Name="BtnRelaunchAdmin" Style="{StaticResource BtnPill}" Click="BtnRelaunchAdmin_Click" Visibility="Collapsed" ToolTip="Relaunch CoreSpectre with Administrator privileges to unlock system caches">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <Path Data="{StaticResource IconShield}" Width="12" Height="12" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="BtnRelaunchAdminText" Text="Run as Admin" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Button>
-                    </StackPanel>
+                    </WrapPanel>
                 </Grid>
             </Border>
 

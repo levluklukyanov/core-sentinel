@@ -98,4 +98,30 @@ public class StorageServiceTests
         Assert.Equal("Banana Logs", sorted[1].Name);
         Assert.Equal("Zebra Cache", sorted[2].Name);
     }
+
+    [Fact]
+    public void ScanTempLocations_AssignsUniqueKeysAndRespectsDisabledTargets()
+    {
+        var settings = new UserSettingsModel
+        {
+            CleanTempFiles = true,
+            CleanRecycleBin = false,
+            DisabledCleanupTargets = new List<string> { "user_temp" }
+        };
+
+        var targets = StorageService.ScanTempLocations(isEn: true, settings);
+
+        Assert.NotEmpty(targets);
+        Assert.All(targets, t => Assert.False(string.IsNullOrWhiteSpace(t.Key)));
+
+        var userTemp = targets.FirstOrDefault(t => t.Key == "user_temp");
+        if (userTemp != null)
+        {
+            Assert.False(userTemp.IsSelected);
+        }
+
+        var recycleBin = targets.FirstOrDefault(t => t.Key == "recycle_bin");
+        Assert.NotNull(recycleBin);
+        Assert.False(recycleBin.IsSelected);
+    }
 }

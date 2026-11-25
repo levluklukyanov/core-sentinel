@@ -43,9 +43,9 @@ public partial class OverviewView : UserControl
 
     private void QuickCpuMetricToolTip(bool isEn)
     {
-        BtnCpuAction.ToolTip = isEn ? "Open Windows Task Manager" : "Открыть Диспетчер задач Windows";
-        MetricCpuAction.ToolTip = isEn ? "Open Windows Task Manager" : "Открыть Диспетчер задач Windows";
-        BtnRamAction.ToolTip = isEn ? "Open Process Manager (sorted by RAM)" : "Открыть Диспетчер процессов (сортировка по ОЗУ)";
+        BtnCpuAction.ToolTip = isEn ? "Switch to CPU Optimization tab" : "Перейти на вкладку Оптимизации ЦП";
+        MetricCpuAction.ToolTip = isEn ? "Switch to CPU Optimization tab" : "Перейти на вкладку Оптимизации ЦП";
+        BtnRamAction.ToolTip = isEn ? "Switch to Memory Purge tab" : "Перейти на вкладку Очистки ОЗУ";
         MetricRamAction.ToolTip = isEn ? "Switch to Memory Purge tab" : "Перейти на вкладку Очистки ОЗУ";
         BtnDiskAction.ToolTip = isEn ? "Open drive in Windows Explorer" : "Открыть накопитель в Проводнике";
         MetricDiskAction.ToolTip = isEn ? "Open drive in Windows Explorer" : "Открыть накопитель в Проводнике";
@@ -63,31 +63,42 @@ public partial class OverviewView : UserControl
         double diskTotalGb,
         string? diskDName,
         double diskDFreeGb,
+        double diskDTotalGb,
         string gameBadge,
         string gameDetail,
         string healthBadge,
         string recommendation)
     {
+        bool isRu = LocalizationService.IsRussian;
+
         // CPU
         DashCpuVal.Text = $"{cpuPercent:0}%";
         DashCpuProgress.Value = Math.Clamp(cpuPercent, 0, 100);
-        DashCpuSub.Text = string.IsNullOrWhiteSpace(cpuName) ? "Detecting processor..." : cpuName;
+        DashCpuSub.Text = string.IsNullOrWhiteSpace(cpuName) ? (isRu ? "Определение процессора..." : "Detecting processor...") : cpuName;
 
         // RAM
         DashRamVal.Text = $"{ramPercent:0}%";
         DashRamProgress.Value = Math.Clamp(ramPercent, 0, 100);
-        DashRamSub.Text = LocalizationService.IsRussian
-            ? $"Исп: {ramUsedGb:0.0} / {ramTotalGb:0.0} ГБ"
-            : $"Used: {ramUsedGb:0.0} / {ramTotalGb:0.0} GB";
+        if (ramTotalGb > 0)
+        {
+            DashRamSub.Text = isRu
+                ? $"Исп: {ramUsedGb:0.0} / {ramTotalGb:0.0} ГБ"
+                : $"Used: {ramUsedGb:0.0} / {ramTotalGb:0.0} GB";
+        }
+        else
+        {
+            DashRamVal.Text = "N/A";
+            DashRamSub.Text = isRu ? "Данные ОЗУ недоступны" : "Memory data unavailable";
+        }
 
         // Primary Disk
-        DashDiskCTitle.Text = LocalizationService.IsRussian
-            ? $"ХРАНИЛИЩЕ ({watchedDrive}:)"
+        DashDiskCTitle.Text = isRu
+            ? $"НАКОПИТЕЛЬ ({watchedDrive}:)"
             : $"STORAGE ({watchedDrive}:)";
-        DashDiskCVal.Text = $"{diskFreeGb:0.0} GB";
+        DashDiskCVal.Text = isRu ? $"{diskFreeGb:0.0} ГБ" : $"{diskFreeGb:0.0} GB";
         double diskUsedPercent = diskTotalGb > 0 ? ((diskTotalGb - diskFreeGb) / diskTotalGb) * 100.0 : 0;
         DashDiskCProgress.Value = Math.Clamp(diskUsedPercent, 0, 100);
-        DashDiskCSub.Text = LocalizationService.IsRussian
+        DashDiskCSub.Text = isRu
             ? $"Свободно {diskFreeGb:0.0} из {diskTotalGb:0.0} ГБ"
             : $"Free {diskFreeGb:0.0} of {diskTotalGb:0.0} GB";
 
@@ -95,9 +106,11 @@ public partial class OverviewView : UserControl
         if (!string.IsNullOrEmpty(diskDName))
         {
             DashDiskDRow.Visibility = Visibility.Visible;
-            DashDiskDTitle.Text = LocalizationService.IsRussian ? $"Диск данных ({diskDName}:)" : $"Data Drive ({diskDName}:)";
-            DashDiskDText.Text = LocalizationService.IsRussian ? $"Свободно: {diskDFreeGb:0.0} ГБ" : $"Free: {diskDFreeGb:0.0} GB";
-            DashDiskDBadge.Text = $"{diskDName}:";
+            DashDiskDTitle.Text = isRu ? $"Диск данных ({diskDName}:)" : $"Data Drive ({diskDName}:)";
+            DashDiskDText.Text = isRu
+                ? $"Свободно: {diskDFreeGb:0.0} ГБ из {diskDTotalGb:0.0} ГБ"
+                : $"Free: {diskDFreeGb:0.0} GB of {diskDTotalGb:0.0} GB";
+            DashDiskDBadge.Text = isRu ? $"Диск {diskDName}:" : $"Drive {diskDName}:";
         }
         else
         {

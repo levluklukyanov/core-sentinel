@@ -21,6 +21,7 @@ public partial class GamesView : UserControl
     public event Action? OnBoostPriorityRequested;
     public event Action? OnRefreshActiveGamesRequested;
     public event Action<FrameworkElement>? OnGameDriveFilterRequested;
+    public event Action<bool>? OnIncludeLaunchersChanged;
     public event Action<string>? OnStatusChanged;
 
     public bool IncludeLaunchers => _includeLaunchers;
@@ -47,6 +48,13 @@ public partial class GamesView : UserControl
         InstalledGamesSubtitle.Text = LocalizationService.Get("Games.InstalledSub");
         BtnScanGamesText.Text = LocalizationService.Get("Games.ScanDrivesBtn");
         TxtNoActiveGames.Text = LocalizationService.Get("Games.NoActive");
+        TxtScanPlaceholder.Text = LocalizationService.Get("Games.NoScan");
+        if (_installedGames.Count == 0 && !_isScanningGames)
+        {
+            InstalledScanStatusText.Text = isEn
+                ? "Click 'Scan Drives' to discover games on your PC."
+                : "Нажмите «Сканировать диски» для поиска игр на ПК.";
+        }
         InstalledGamesFooterInfo.Text = isEn
             ? "Scans Steam, Xbox, Epic, AppData (.minecraft, .tlauncher), and custom drive game folders."
             : "Сканирует библиотеки Steam, Xbox, Epic, AppData (.minecraft, .tlauncher) и папки Games на дисках.";
@@ -158,13 +166,31 @@ public partial class GamesView : UserControl
 
     private void BtnToggleLaunchers_Click(object sender, RoutedEventArgs e)
     {
-        _includeLaunchers = !_includeLaunchers;
-        UpdateLauncherToggleVisual();
-        var settings = SettingsPersistenceService.Load();
-        settings.IncludeLaunchers = _includeLaunchers;
-        SettingsPersistenceService.Save(settings);
+        if (sender is not Button btn) return;
+        bool isEn = LocalizationService.IsEnglish;
 
-        _ = ScanGamesAsync();
+        var cm = new ContextMenu
+        {
+            PlacementTarget = btn,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom
+        };
+
+        var miToggle = new MenuItem
+        {
+            Header = isEn ? "Scan Minecraft Launchers (TLauncher, etc.)" : "Искать лаунчеры Майнкрафт (TLauncher и др.)",
+            IsCheckable = true,
+            IsChecked = _includeLaunchers
+        };
+        miToggle.Click += (s, ev) =>
+        {
+            _includeLaunchers = miToggle.IsChecked;
+            UpdateLauncherToggleVisual();
+            OnIncludeLaunchersChanged?.Invoke(_includeLaunchers);
+            _ = ScanGamesAsync();
+        };
+
+        cm.Items.Add(miToggle);
+        cm.IsOpen = true;
     }
 
     private void BtnOpenGameFolder_Click(object sender, RoutedEventArgs e)

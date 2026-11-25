@@ -9,7 +9,9 @@ public record StartupEntry(
     bool IsEnabled
 )
 {
-    public string EnabledText => IsEnabled ? "Вкл" : "Выкл";
+    public string EnabledText => LocalizationService.IsEnglish
+        ? (IsEnabled ? "On" : "Off")
+        : (IsEnabled ? "Вкл" : "Выкл");
 }
 
 public record StartupOperationResult(bool Success, string Message);

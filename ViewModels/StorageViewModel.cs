@@ -8,7 +8,7 @@ using CoreSpectre.Services;
 
 namespace CoreSpectre.ViewModels;
 
-public record CleanTargetItem(string Name, string Path, string FormattedSize, long Bytes);
+public record CleanTargetItem(string Key, string Name, string Path, string FormattedSize, long Bytes, bool IsSelected = true, bool RequiresAdmin = false);
 
 public partial class StorageViewModel : ObservableObject
 {
