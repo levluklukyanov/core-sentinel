@@ -5,7 +5,7 @@ obj/
 *.dll
 *.pdb
 *.msi
-!clean.bat
+!scripts/clean.bat
 
 # Visual Studio / IDE cache
 .vs/

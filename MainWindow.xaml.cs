@@ -431,15 +431,15 @@ public partial class MainWindow : Window
         try
         {
             var uri = new Uri(isLight
-                ? "pack://application:,,,/CoreSpectre;component/Themes/AppTheme.Light.xaml"
-                : "pack://application:,,,/CoreSpectre;component/Themes/AppTheme.xaml", UriKind.Absolute);
+                ? "pack://application:,,,/CoreSpectre;component/Assets/Themes/AppTheme.Light.xaml"
+                : "pack://application:,,,/CoreSpectre;component/Assets/Themes/AppTheme.xaml", UriKind.Absolute);
             Application.Current.Resources.MergedDictionaries[0] = new ResourceDictionary { Source = uri };
         }
         catch
         {
             try
             {
-                var relUri = new Uri(isLight ? "Themes/AppTheme.Light.xaml" : "Themes/AppTheme.xaml", UriKind.Relative);
+                var relUri = new Uri(isLight ? "Assets/Themes/AppTheme.Light.xaml" : "Assets/Themes/AppTheme.xaml", UriKind.Relative);
                 Application.Current.Resources.MergedDictionaries[0] = new ResourceDictionary { Source = relUri };
             }
             catch (Exception ex)
@@ -454,15 +454,15 @@ public partial class MainWindow : Window
             {
                 BrandLogoImage.Source = new System.Windows.Media.Imaging.BitmapImage(
                     new Uri(isLight
-                        ? "pack://application:,,,/CoreSpectre;component/logo_dark.png"
-                        : "pack://application:,,,/CoreSpectre;component/logo.png", UriKind.Absolute));
+                        ? "pack://application:,,,/CoreSpectre;component/Assets/Icons/logo_dark.png"
+                        : "pack://application:,,,/CoreSpectre;component/Assets/Icons/logo.png", UriKind.Absolute));
             }
             catch
             {
                 try
                 {
                     BrandLogoImage.Source = new System.Windows.Media.Imaging.BitmapImage(
-                        new Uri(isLight ? "logo_dark.png" : "logo.png", UriKind.Relative));
+                        new Uri(isLight ? "Assets/Icons/logo_dark.png" : "Assets/Icons/logo.png", UriKind.Relative));
                 }
                 catch { }
             }

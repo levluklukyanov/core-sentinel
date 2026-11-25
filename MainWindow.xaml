@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:views="clr-namespace:CoreSpectre.Views"
         Title="CoreSpectre" 
-        Icon="app.ico"
+        Icon="Assets/Icons/app.ico"
         WindowStyle="None"
         ResizeMode="NoResize"
         WindowState="Maximized"
@@ -45,7 +45,7 @@
 
                 <!-- Brand / Logo -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Image x:Name="BrandLogoImage" Source="logo.png" Width="18" Height="18" Margin="0,0,9,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center"/>
+                    <Image x:Name="BrandLogoImage" Source="Assets/Icons/logo.png" Width="18" Height="18" Margin="0,0,9,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center"/>
                     <TextBlock Text="CoreSpectre" FontWeight="SemiBold" FontSize="14.5" Foreground="{DynamicResource BrushTextPrimary}" VerticalAlignment="Center"/>
                 </StackPanel>
 

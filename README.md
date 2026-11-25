@@ -2,8 +2,8 @@
 
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6)](https://github.com/levluklukyanov/core-spectre)
 [![Framework](https://img.shields.io/badge/.NET-10.0%20WPF-512BD4)](https://dotnet.microsoft.com/)
-[![Language](https://img.shields.io/badge/C%23-13.0-239120)](https://docs.microsoft.com/dotnet/csharp/)
-[![Release](https://img.shields.io/badge/Release-v1.1.0-success)](https://github.com/levluklukyanov/core-spectre/releases)
+[![Language](https://img.shields.io/badge/C%23-13.0-239120)](https://learn.microsoft.com/dotnet/csharp/)
+[![Release](https://img.shields.io/badge/Release-v1.1.1-success)](https://github.com/levluklukyanov/core-spectre/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 High-performance Windows system utility, real-time hardware telemetry monitor, and gaming resource manager built with C# 13 and .NET 10 (WPF).
@@ -14,7 +14,7 @@ High-performance Windows system utility, real-time hardware telemetry monitor, a
 
 ## Overview
 
-CoreSpectre provides real-time system monitoring, dual-engine memory and CPU optimization, game process prioritization, and disk maintenance within a single, lightweight desktop interface designed with engineering minimalism.
+CoreSpectre provides real-time system monitoring, dual-engine memory and CPU optimization, game process prioritization, and disk maintenance within a single, low-overhead desktop interface designed with engineering minimalism.
 
 ## Features
 
@@ -31,7 +31,7 @@ CoreSpectre provides real-time system monitoring, dual-engine memory and CPU opt
 - Storage-wide game library scanner with duplicate exclusion and Minecraft launcher filtering.
 
 ### Storage Management & System Maintenance
-- **Configurable Cleanup Engine:** Granular selection of cleanup targets via a dedicated gear menu (Temporary files, Windows Update `SoftwareDistribution` cache, Windows Error Reporting and CBS logs, DNS cache, Recycle Bin, and DISM Component Store maintenance).
+- **Configurable Cleanup Engine:** Granular per-target checkboxes directly in the target list (Temporary files, Windows Update `SoftwareDistribution` cache, Windows Error Reporting and CBS logs, DNS cache, Recycle Bin, DISM Component Store maintenance, and optional ResetBase) with automatic 30-second background cache rescanning.
 - **System Restore Point & Rollback Protection:** Automated Windows System Restore Point creation (`Checkpoint-Computer`) before deep cleanup operations, with one-click access to the Windows System Restore wizard (`rstrui.exe`).
 - **Interactive Target Sorting:** Organize detected targets by Size (Descending / Ascending) or Alphabetical Name (A–Z), persisted across application sessions.
 
@@ -48,7 +48,7 @@ CoreSpectre provides real-time system monitoring, dual-engine memory and CPU opt
 ### Architecture & Reliability
 - **Modular MVVM Structure:** Decoupled UserControls and dedicated ViewModels powered by `CommunityToolkit.Mvvm`.
 - **Thread-Safe Rotating Logging:** Comprehensive diagnostics at `%LOCALAPPDATA%\CoreSpectre\logs\app.log` and `crash_log.txt` with automatic 1 MB rotation (`.old`).
-- **Automated Unit Testing:** Dedicated test suite (`CoreSpectre.Tests`) with 32 automated xUnit tests validating size calculations, safety defaults, settings serialization, game detection, and launcher exclusions.
+- **Automated Unit Testing:** Dedicated test suite (`CoreSpectre.Tests`) with 34 automated xUnit tests validating size calculations, safety defaults, settings serialization, game detection, launcher exclusions, and UI resource loading.
 
 ---
 
@@ -89,7 +89,8 @@ CoreSpectre operates transparently and strictly modifies only documented system 
 - **Game Sentinel:** Elevates the execution priority of recognized active game processes to `High` to ensure consistent frame pacing.
 
 ### 4. Administrator Privileges (UAC)
-The core application is fully operational under a standard, non-elevated user account for telemetry, working set trimming, user temp cleanup, and HKCU startup management. Deep system maintenance (Windows Temp, SoftwareDistribution, CBS logs, DISM, and HKLM registry modifications) requires running as Administrator via the built-in "Run as Admin" button.
+The core application is fully operational under a standard, non-elevated user account for telemetry, working set trimming, user temp cleanup, and HKCU startup management. Deep system maintenance (`Windows\Temp`, `SoftwareDistribution`, `CBS` logs, DISM, and HKLM registry modifications) requests elevation on demand via UAC and executes through a hidden `--elevated-worker` process without closing the main window.
+Optional standalone CLI maintenance is also available via [scripts/clean.bat](scripts/clean.bat) (bundled as `clean.bat` in `CoreSpectre-win-x64.zip`).
 
 ### 5. System Restore Points
 Before executing deep cleanup routines, CoreSpectre can trigger a native Windows System Restore checkpoint via PowerShell (`Checkpoint-Computer -Description 'CoreSpectre Before Deep Cleanup' -RestorePointType 'MODIFY_SETTINGS'`). This allows users to revert system state via `rstrui.exe` at any time.
@@ -135,5 +136,13 @@ dotnet test CoreSpectre.sln -c Release
 dotnet build CoreSpectre.sln -c Release
 
 # Publish standalone single-file binary
-dotnet publish CoreSpectre.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
+dotnet publish CoreSpectre.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish
 ```
+
+---
+
+## License
+
+Distributed under the [MIT License](LICENSE).
+
+> **Disclaimer:** CoreSpectre interacts with Windows cleanup paths, system restore checkpoints, Win32 memory APIs, and startup registry keys. Although protected system directories and restore points are safeguarded by design, all system maintenance operations are performed at the user's own discretion and responsibility.

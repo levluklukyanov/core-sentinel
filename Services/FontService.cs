@@ -74,8 +74,14 @@ public static class FontService
 
     private static string LocateOrExtractFonts()
     {
-        // 1. Проверяем папку Fonts рядом с исполняемым файлом
+        // 1. Проверяем папку Assets/Fonts рядом с исполняемым файлом (и legacy Fonts/)
         string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        string assetFontsDir = Path.Combine(baseDir, "Assets", "Fonts");
+        if (DirectoryHasAllFonts(assetFontsDir))
+        {
+            return assetFontsDir;
+        }
+
         string localFontsDir = Path.Combine(baseDir, "Fonts");
         if (DirectoryHasAllFonts(localFontsDir))
         {

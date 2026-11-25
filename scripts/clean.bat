@@ -1,5 +1,6 @@
 @echo off
 :: CoreSpectre Standalone Deep Cleanup Script
+:: Optional standalone batch utility (bundled as clean.bat in release zip packages)
 :: Проверка прав администратора. Если их нет — запрашиваем автоматически.
 net session >nul 2>&1
 if %errorLevel% neq 0 (

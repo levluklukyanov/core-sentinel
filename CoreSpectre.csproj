@@ -16,19 +16,20 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
-    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationIcon>Assets\Icons\app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
-    <Resource Include="app.ico" />
-    <Resource Include="logo.png" />
-    <Resource Include="logo_dark.png" />
-    <EmbeddedResource Include="Fonts\*.ttf" />
-    <Content Include="Fonts\*.ttf">
+    <Resource Include="Assets\Icons\app.ico" />
+    <Resource Include="Assets\Icons\logo.png" />
+    <Resource Include="Assets\Icons\logo_dark.png" />
+    <EmbeddedResource Include="Assets\Fonts\*.ttf" />
+    <Content Include="Assets\Fonts\*.ttf">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-    <Content Include="clean.bat">
+    <Content Include="scripts\clean.bat" Link="clean.bat">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>

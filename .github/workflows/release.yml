@@ -39,7 +39,7 @@ jobs:
         run: |
           # Ensure clean.bat exists in publish directory
           if (-not (Test-Path ./publish/clean.bat)) {
-            Copy-Item -Path clean.bat -Destination ./publish/clean.bat
+            Copy-Item -Path scripts/clean.bat -Destination ./publish/clean.bat
           }
           # Create zip archive of the published release package
           Compress-Archive -Path ./publish/* -DestinationPath ./CoreSpectre-win-x64.zip -Force
