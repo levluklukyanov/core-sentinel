@@ -1,9 +1,9 @@
 # CoreSpectre
 
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6)](https://github.com/levluklukyanov/core-spectre)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6)](https://github.com/mrebardo/core-spectre)
 [![Framework](https://img.shields.io/badge/.NET-10.0%20WPF-512BD4)](https://dotnet.microsoft.com/)
 [![Language](https://img.shields.io/badge/C%23-13.0-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![Release](https://img.shields.io/badge/Release-v1.2.0-success)](https://github.com/levluklukyanov/core-spectre/releases)
+[![Release](https://img.shields.io/badge/Release-v1.2.0-success)](https://github.com/mrebardo/core-spectre/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 High-performance Windows system utility, real-time hardware telemetry monitor, and gaming resource manager built with C# 13 and .NET 10 (WPF).
@@ -114,7 +114,7 @@ The entire source code is 100% open, auditable, and can be built directly from s
 
 ## Installation
 
-1. Navigate to the [Releases](https://github.com/levluklukyanov/core-spectre/releases) page.
+1. Navigate to the [Releases](https://github.com/mrebardo/core-spectre/releases) page.
 2. Download the standalone executable `CoreSpectre.exe`.
 3. Launch the application.
 
@@ -133,7 +133,7 @@ The entire source code is 100% open, auditable, and can be built directly from s
 
 ```bash
 # Clone the repository
-git clone https://github.com/levluklukyanov/core-spectre.git
+git clone https://github.com/mrebardo/core-spectre.git
 cd core-spectre
 
 # Run unit test suite
