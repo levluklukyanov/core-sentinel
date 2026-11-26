@@ -2,6 +2,8 @@ using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Shapes;
 using CoreSpectre.Services;
 
 namespace CoreSpectre.Views;
@@ -36,8 +38,9 @@ public partial class OverviewView : UserControl
         DashQuickPurgeRamText.Text = LocalizationService.Get("Dash.FlushRam");
         DashToggleHudText.Text = LocalizationService.Get("Dash.ToggleHud");
         DashCleanJunkText.Text = LocalizationService.Get("Dash.CleanJunk");
+        DashGpuSensorTitle.Text = isEn ? "GPU Sensor Telemetry" : "Сенсоры видеокарты";
+        DashGpuSensorDetail.Text = isEn ? "Live GPU utilization and temperature" : "Загрузка GPU и температура в реальном времени";
 
-        // Tooltips
         QuickCpuMetricToolTip(isEn);
     }
 
@@ -67,7 +70,11 @@ public partial class OverviewView : UserControl
         string gameBadge,
         string gameDetail,
         string healthBadge,
-        string recommendation)
+        string recommendation,
+        double[]? cpuHistory = null,
+        double[]? ramHistory = null,
+        double? gpuLoadPercent = null,
+        double? gpuTempCelsius = null)
     {
         bool isRu = LocalizationService.IsRussian;
 
@@ -75,6 +82,7 @@ public partial class OverviewView : UserControl
         DashCpuVal.Text = $"{cpuPercent:0}%";
         DashCpuProgress.Value = Math.Clamp(cpuPercent, 0, 100);
         DashCpuSub.Text = string.IsNullOrWhiteSpace(cpuName) ? (isRu ? "Определение процессора..." : "Detecting processor...") : cpuName;
+        UpdateSparkline(CpuSparkline, cpuHistory);
 
         // RAM
         DashRamVal.Text = $"{ramPercent:0}%";
@@ -90,6 +98,7 @@ public partial class OverviewView : UserControl
             DashRamVal.Text = "N/A";
             DashRamSub.Text = isRu ? "Данные ОЗУ недоступны" : "Memory data unavailable";
         }
+        UpdateSparkline(RamSparkline, ramHistory);
 
         // Primary Disk
         DashDiskCTitle.Text = isRu
@@ -102,10 +111,11 @@ public partial class OverviewView : UserControl
             ? $"Свободно {diskFreeGb:0.0} из {diskTotalGb:0.0} ГБ"
             : $"Free {diskFreeGb:0.0} of {diskTotalGb:0.0} GB";
 
-        // Secondary Disk D
+        // Secondary Disk
         if (!string.IsNullOrEmpty(diskDName))
         {
             DashDiskDRow.Visibility = Visibility.Visible;
+            DashDiskDSep.Visibility = Visibility.Visible;
             DashDiskDTitle.Text = isRu ? $"Диск данных ({diskDName}:)" : $"Data Drive ({diskDName}:)";
             DashDiskDText.Text = isRu
                 ? $"Свободно: {diskDFreeGb:0.0} ГБ из {diskDTotalGb:0.0} ГБ"
@@ -115,6 +125,24 @@ public partial class OverviewView : UserControl
         else
         {
             DashDiskDRow.Visibility = Visibility.Collapsed;
+            DashDiskDSep.Visibility = Visibility.Collapsed;
+        }
+
+        // GPU Sensors (only display values actually reported by hardware/driver)
+        var gpuParts = new System.Collections.Generic.List<string>(2);
+        if (gpuLoadPercent.HasValue) gpuParts.Add($"{gpuLoadPercent.Value:0}%");
+        if (gpuTempCelsius.HasValue) gpuParts.Add($"{gpuTempCelsius.Value:0}°C");
+
+        if (gpuParts.Count > 0)
+        {
+            DashGpuRow.Visibility = Visibility.Visible;
+            DashGpuSep.Visibility = Visibility.Visible;
+            DashGpuSensorBadge.Text = string.Join(" · ", gpuParts);
+        }
+        else
+        {
+            DashGpuRow.Visibility = Visibility.Collapsed;
+            DashGpuSep.Visibility = Visibility.Collapsed;
         }
 
         // Game Status
@@ -124,6 +152,36 @@ public partial class OverviewView : UserControl
         // Health Recommendation
         DashHealthBadge.Text = healthBadge;
         DashRecommendation.Text = recommendation;
+    }
+
+    private static void UpdateSparkline(Polyline line, double[]? samples)
+    {
+        if (samples == null || samples.Length < 2)
+        {
+            line.Points.Clear();
+            return;
+        }
+
+        const int WindowSize = 25;
+        double w = line.Width > 0 ? line.Width : 104;
+        double h = line.Height > 0 ? line.Height : 28;
+        int count = Math.Min(samples.Length, WindowSize);
+        int offset = samples.Length - count;
+
+        // Fixed horizontal step anchored to the right edge so old points visibly scroll left and exit the viewport
+        double stepX = w / (WindowSize - 1);
+        double startX = w - (count - 1) * stepX;
+
+        var pts = new PointCollection(count);
+        for (int i = 0; i < count; i++)
+        {
+            double x = startX + i * stepX;
+            double v = Math.Clamp(samples[offset + i], 0, 100);
+            double y = h - 2 - (v / 100.0) * (h - 4);
+            pts.Add(new Point(x, y));
+        }
+
+        line.Points = pts;
     }
 
     private void CpuMetric_Click(object sender, MouseButtonEventArgs e) => OnCpuClicked?.Invoke();

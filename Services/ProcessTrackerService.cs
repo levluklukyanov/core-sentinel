@@ -32,7 +32,7 @@ public static class ProcessTrackerService
 
     private static readonly HashSet<string> CriticalProcessNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        "system", "idle", "registry", "smss", "csrss", "wininit", "services", 
+        "system", "idle", "registry", "smss", "csrss", "wininit", "services",
         "lsass", "winlogon", "fontdrvhost", "dwm", "explorer", "corespectre",
         "svchost", "sihost", "audiodg", "spoolsv"
     };
@@ -49,68 +49,73 @@ public static class ProcessTrackerService
         {
             foreach (var proc in processes)
             {
-                int pid = proc.Id;
-                activePids.Add(pid);
-                string name = proc.ProcessName;
-                string windowTitle = "";
-                long workingSet = 0;
-                int threadCount = 1;
-                string priority = "Обычный";
-                bool isCritical = pid <= 4 || CriticalProcessNames.Contains(name);
-                double cpuPercent = 0.0;
-
                 try
                 {
-                    workingSet = proc.WorkingSet64;
-                    threadCount = proc.Threads.Count;
-                    windowTitle = proc.MainWindowTitle;
-                    priority = MapPriority(proc.BasePriority);
+                    int pid = proc.Id;
+                    activePids.Add(pid);
+                    string name = proc.ProcessName;
+                    string windowTitle = "";
+                    long workingSet = 0;
+                    int threadCount = 1;
+                    string priority = "Обычный";
+                    bool isCritical = pid <= 4 || CriticalProcessNames.Contains(name);
+                    double cpuPercent = 0.0;
 
-                    var totalTime = proc.TotalProcessorTime;
-                    if (_previousTimes.TryGetValue(pid, out var prev))
+                    try
                     {
-                        double timeDiffMs = (now - prev.SampleTime).TotalMilliseconds;
-                        if (timeDiffMs > 100)
+                        workingSet = proc.WorkingSet64;
+                        threadCount = proc.Threads.Count;
+                        windowTitle = proc.MainWindowTitle;
+                        priority = MapPriority(proc.BasePriority);
+
+                        var totalTime = proc.TotalProcessorTime;
+                        if (_previousTimes.TryGetValue(pid, out var prev))
                         {
-                            double cpuDiffMs = (totalTime - prev.TotalTime).TotalMilliseconds;
-                            cpuPercent = Math.Clamp((cpuDiffMs / (timeDiffMs * processorCount)) * 100.0, 0.0, 100.0);
+                            double timeDiffMs = (now - prev.SampleTime).TotalMilliseconds;
+                            if (timeDiffMs > 100)
+                            {
+                                double cpuDiffMs = (totalTime - prev.TotalTime).TotalMilliseconds;
+                                cpuPercent = Math.Clamp((cpuDiffMs / (timeDiffMs * processorCount)) * 100.0, 0.0, 100.0);
+                            }
                         }
+                        _previousTimes[pid] = (totalTime, now);
                     }
-                    _previousTimes[pid] = (totalTime, now);
-                }
-                catch
-                {
-                    // Access denied on protected system/kernel processes
-                }
+                    catch (Exception ex)
+                    {
+                        Logger.Debug($"Process sample skipped for {name} ({pid}): {ex.Message}");
+                    }
 
-                // Filtering by search term
-                if (!string.IsNullOrWhiteSpace(filter))
-                {
-                    bool matchName = name.Contains(filter, StringComparison.OrdinalIgnoreCase);
-                    bool matchPid = pid.ToString().Contains(filter, StringComparison.OrdinalIgnoreCase);
-                    bool matchTitle = !string.IsNullOrEmpty(windowTitle) && windowTitle.Contains(filter, StringComparison.OrdinalIgnoreCase);
-                    if (!matchName && !matchPid && !matchTitle)
-                        continue;
-                }
+                    if (!string.IsNullOrWhiteSpace(filter))
+                    {
+                        bool matchName = name.Contains(filter, StringComparison.OrdinalIgnoreCase);
+                        bool matchPid = pid.ToString().Contains(filter, StringComparison.OrdinalIgnoreCase);
+                        bool matchTitle = !string.IsNullOrEmpty(windowTitle) && windowTitle.Contains(filter, StringComparison.OrdinalIgnoreCase);
+                        if (!matchName && !matchPid && !matchTitle)
+                            continue;
+                    }
 
-                list.Add(new ProcessItemInfo
+                    list.Add(new ProcessItemInfo
+                    {
+                        Pid = pid,
+                        Name = name,
+                        DisplayName = name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name : $"{name}.exe",
+                        WindowTitle = string.IsNullOrWhiteSpace(windowTitle) ? "-" : windowTitle,
+                        WorkingSetBytes = workingSet,
+                        FormattedRam = StorageService.FormatBytes(workingSet),
+                        CpuPercent = Math.Round(cpuPercent, 1),
+                        FormattedCpu = $"{cpuPercent:0.0}%",
+                        ThreadCount = threadCount,
+                        Priority = priority,
+                        IsCritical = isCritical,
+                        HasWindow = !string.IsNullOrWhiteSpace(windowTitle)
+                    });
+                }
+                finally
                 {
-                    Pid = pid,
-                    Name = name,
-                    DisplayName = name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name : $"{name}.exe",
-                    WindowTitle = string.IsNullOrWhiteSpace(windowTitle) ? "-" : windowTitle,
-                    WorkingSetBytes = workingSet,
-                    FormattedRam = StorageService.FormatBytes(workingSet),
-                    CpuPercent = Math.Round(cpuPercent, 1),
-                    FormattedCpu = $"{cpuPercent:0.0}%",
-                    ThreadCount = threadCount,
-                    Priority = priority,
-                    IsCritical = isCritical,
-                    HasWindow = !string.IsNullOrWhiteSpace(windowTitle)
-                });
+                    proc.Dispose();
+                }
             }
 
-            // Clean up dead PIDs
             var deadPids = _previousTimes.Keys.Where(k => !activePids.Contains(k)).ToList();
             foreach (var d in deadPids)
             {
@@ -118,7 +123,6 @@ public static class ProcessTrackerService
             }
         }
 
-        // Sorting
         if (sortMode == ProcessSortMode.Cpu)
         {
             list.Sort((a, b) =>
@@ -138,76 +142,6 @@ public static class ProcessTrackerService
 
         return list;
     }
-
-    public static (bool Success, string Message) TerminateProcess(int pid)
-    {
-        try
-        {
-            using var proc = Process.GetProcessById(pid);
-            if (proc.Id <= 4 || CriticalProcessNames.Contains(proc.ProcessName))
-            {
-                return (false, $"Процесс '{proc.ProcessName}' (PID {pid}) защищен системой. Завершение заблокировано.");
-            }
-
-            string name = proc.ProcessName;
-            proc.Kill(true);
-            return (true, $"Процесс '{name}' (PID {pid}) успешно завершен.");
-        }
-        catch (ArgumentException)
-        {
-            return (false, $"Процесс с PID {pid} не найден или уже завершен.");
-        }
-        catch (Exception ex)
-        {
-            return (false, $"Ошибка завершения процесса: {ex.Message}");
-        }
-    }
-
-    public static (bool Success, string Message) PurgeProcessMemory(int pid)
-    {
-        try
-        {
-            using var proc = Process.GetProcessById(pid);
-            long before = proc.WorkingSet64;
-            
-            const uint PROCESS_QUERY_INFORMATION = 0x0400;
-            const uint PROCESS_SET_QUOTA = 0x0100;
-            
-            IntPtr hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_SET_QUOTA, false, pid);
-            if (hProcess != IntPtr.Zero)
-            {
-                try
-                {
-                    bool ok = EmptyWorkingSet(hProcess);
-                    if (ok)
-                    {
-                        proc.Refresh();
-                        long after = proc.WorkingSet64;
-                        long freed = Math.Max(0, before - after);
-                        return (true, $"ОЗУ процесса '{proc.ProcessName}' очищено. Высвобождено {StorageService.FormatBytes(freed)}.");
-                    }
-                }
-                finally
-                {
-                    CloseHandle(hProcess);
-                }
-            }
-            return (false, "Не удалось выполнить сброс рабочего набора процесса.");
-        }
-        catch (Exception ex)
-        {
-            return (false, $"Ошибка оптимизации: {ex.Message}");
-        }
-    }
-
-    [DllImport("psapi.dll", SetLastError = true)]
-    private static extern bool EmptyWorkingSet(IntPtr hProcess);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool CloseHandle(IntPtr hObject);
 
     private static string MapPriority(int basePriority) => basePriority switch
     {

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.IO;
 using Microsoft.Win32;
 
 namespace CoreSpectre.Services;
@@ -6,7 +8,12 @@ public record StartupEntry(
     string Name,
     string Command,
     string Source,
-    bool IsEnabled
+    bool IsEnabled,
+    RegistryHive Hive = RegistryHive.CurrentUser,
+    string RunSubKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+    string ApprovedSubKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
+    bool IsScheduledTask = false,
+    string TaskFullPath = ""
 )
 {
     public string EnabledText => LocalizationService.IsEnglish
@@ -18,106 +25,194 @@ public record StartupOperationResult(bool Success, string Message);
 
 public static class StartupService
 {
-    private static readonly (string KeyPath, string Hive, bool IsUser)[] Sources =
+    private readonly record struct StartupSourceDef(
+        string RunSubKey,
+        string ApprovedSubKey,
+        RegistryHive Hive,
+        string Label
+    );
+
+    private static readonly StartupSourceDef[] Sources =
     [
-        (@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "HKCU", true),
-        (@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "HKLM", false),
-        (@"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run", "HKLM", false)
+        new(
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
+            RegistryHive.CurrentUser,
+            @"HKCU\Run"),
+        new(
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
+            RegistryHive.LocalMachine,
+            @"HKLM\Run"),
+        new(
+            @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run",
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32",
+            RegistryHive.LocalMachine,
+            @"HKLM\Run32")
     ];
 
-    private static readonly (string KeyPath, string Hive)[] DisabledSources =
-    [
-        (@"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run", "HKCU"),
-        (@"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run", "HKLM"),
-        (@"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32", "HKLM")
-    ];
+    private static RegistryKey GetRootKey(RegistryHive hive) =>
+        hive == RegistryHive.CurrentUser ? Registry.CurrentUser : Registry.LocalMachine;
 
     public static List<StartupEntry> GetAllEntries()
     {
         var entries = new List<StartupEntry>();
-        var disabledNames = GetDisabledNames();
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var (keyPath, hive, isUser) in Sources)
+        foreach (var src in Sources)
         {
             try
             {
-                var rootKey = isUser ? Registry.CurrentUser : Registry.LocalMachine;
-                using var key = rootKey.OpenSubKey(keyPath, writable: false);
+                var rootKey = GetRootKey(src.Hive);
+                var disabledNames = GetDisabledNamesForScope(rootKey, src.ApprovedSubKey);
+
+                using var key = rootKey.OpenSubKey(src.RunSubKey, writable: false);
                 if (key == null) continue;
 
                 foreach (var name in key.GetValueNames())
                 {
+                    if (string.IsNullOrWhiteSpace(name)) continue;
+
+                    string dedupeKey = $"{src.Hive}|{src.RunSubKey}|{name}";
+                    if (!seenKeys.Add(dedupeKey)) continue;
+
                     string cmd = key.GetValue(name)?.ToString() ?? "";
-                    bool enabled = !disabledNames.Contains(name, StringComparer.OrdinalIgnoreCase);
+                    bool enabled = !disabledNames.Contains(name);
                     entries.Add(new StartupEntry(
                         Name: name,
                         Command: cmd,
-                        Source: $"{hive}\\...\\Run",
-                        IsEnabled: enabled
+                        Source: src.Label,
+                        IsEnabled: enabled,
+                        Hive: src.Hive,
+                        RunSubKey: src.RunSubKey,
+                        ApprovedSubKey: src.ApprovedSubKey
                     ));
                 }
             }
             catch (Exception ex) { Logger.Debug("StartupService.cs: " + ex.Message); }
         }
 
-        return entries.DistinctBy(e => e.Name).ToList();
+        // Also include non-Microsoft Logon/Boot Scheduled Tasks
+        try
+        {
+            entries.AddRange(GetNonMicrosoftScheduledTasks());
+        }
+        catch (Exception ex) { Logger.Debug($"StartupService tasks: {ex.Message}"); }
+
+        return entries;
     }
 
-    private static HashSet<string> GetDisabledNames()
+    private static List<StartupEntry> GetNonMicrosoftScheduledTasks()
+    {
+        var list = new List<StartupEntry>();
+        try
+        {
+            string psPath = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+            string script = "Get-ScheduledTask | Where-Object { $_.TaskPath -notlike '\\Microsoft\\*' -and ($_.Triggers | Where-Object { $_.CimClass.CimClassName -match 'Logon|Boot' }) } | Select-Object TaskName,TaskPath,State,@{N='Exec';E={($_.Actions | Select-Object -First 1).Execute}} | ConvertTo-Csv -NoTypeInformation";
+            var psi = new ProcessStartInfo(psPath, $"-NoProfile -NonInteractive -Command \"{script}\"")
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            using var p = Process.Start(psi);
+            if (p == null) return list;
+
+            var readTask = p.StandardOutput.ReadToEndAsync();
+            if (!p.WaitForExit(3500))
+            {
+                try { p.Kill(entireProcessTree: true); } catch (Exception ex) { Logger.Debug($"StartupService kill failed: {ex.Message}"); }
+                return list;
+            }
+            string output = readTask.GetAwaiter().GetResult();
+
+            var lines = output.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 1; i < lines.Length; i++)
+            {
+                var cols = SplitCsvLine(lines[i]);
+                if (cols.Count < 4) continue;
+
+                string name = cols[0];
+                string taskPath = cols[1];
+                string state = cols[2];
+                string exec = cols[3];
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                string fullTask = (taskPath.TrimEnd('\\') + "\\" + name).Trim();
+                bool enabled = !string.Equals(state, "Disabled", StringComparison.OrdinalIgnoreCase);
+
+                list.Add(new StartupEntry(
+                    Name: name,
+                    Command: string.IsNullOrWhiteSpace(exec) ? taskPath : exec,
+                    Source: "Task",
+                    IsEnabled: enabled,
+                    IsScheduledTask: true,
+                    TaskFullPath: fullTask
+                ));
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug($"GetNonMicrosoftScheduledTasks failed: {ex.Message}");
+        }
+        return list;
+    }
+
+    private static List<string> SplitCsvLine(string line)
+    {
+        var res = new List<string>();
+        bool inQuotes = false;
+        var cur = new System.Text.StringBuilder();
+        foreach (char c in line)
+        {
+            if (c == '"') { inQuotes = !inQuotes; continue; }
+            if (c == ',' && !inQuotes) { res.Add(cur.ToString()); cur.Clear(); continue; }
+            cur.Append(c);
+        }
+        res.Add(cur.ToString());
+        return res;
+    }
+
+    private static HashSet<string> GetDisabledNamesForScope(RegistryKey root, string approvedSubKey)
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (keyPath, hive) in DisabledSources)
+        try
         {
-            try
+            using var key = root.OpenSubKey(approvedSubKey, writable: false);
+            if (key == null) return set;
+
+            foreach (var name in key.GetValueNames())
             {
-                var root = hive == "HKCU" ? Registry.CurrentUser : Registry.LocalMachine;
-                using var key = root.OpenSubKey(keyPath, writable: false);
-                if (key == null) continue;
-                foreach (var name in key.GetValueNames())
+                if (key.GetValue(name) is byte[] data && data.Length > 0 && data[0] == 0x03)
                 {
-                    var data = key.GetValue(name) as byte[];
-                    // StartupApproved: first byte 0x03 = disabled
-                    if (data != null && data.Length > 0 && data[0] == 0x03)
-                        set.Add(name);
+                    set.Add(name);
                 }
             }
-            catch (Exception ex) { Logger.Debug("StartupService.cs: " + ex.Message); }
         }
+        catch (Exception ex) { Logger.Debug("StartupService.cs: " + ex.Message); }
         return set;
     }
 
     public static StartupOperationResult SetEntryEnabled(StartupEntry entry, bool enable, bool isEn = false)
     {
-        if (entry.Source.StartsWith("HKLM", StringComparison.OrdinalIgnoreCase) && !StorageService.IsAdministrator())
-        {
-            string reason = isEn 
-                ? "Skipped: administrator privileges required." 
-                : "Пропущено: нужны права администратора.";
-            return new StartupOperationResult(false, reason);
-        }
-
-        // We modify the StartupApproved key to toggle without deleting the entry
-        var approvedPaths = new[]
-        {
-            (Registry.CurrentUser, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"),
-            (Registry.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"),
-        };
-
-        foreach (var (root, path) in approvedPaths)
+        if (entry.IsScheduledTask)
         {
             try
             {
-                using var key = root.OpenSubKey(path, writable: true);
-                if (key == null) continue;
-                if (key.GetValueNames().Contains(entry.Name, StringComparer.OrdinalIgnoreCase))
+                string schtasks = Path.Combine(Environment.SystemDirectory, "schtasks.exe");
+                string flag = enable ? "/enable" : "/disable";
+                var psi = new ProcessStartInfo(schtasks, $"/change /tn \"{entry.TaskFullPath}\" {flag}")
                 {
-                    // enabled = bytes[0]=0x02, disabled = bytes[0]=0x03
-                    var existing = key.GetValue(entry.Name) as byte[] ?? new byte[12];
-                    if (existing.Length > 0)
-                        existing[0] = enable ? (byte)0x02 : (byte)0x03;
-                    key.SetValue(entry.Name, existing, RegistryValueKind.Binary);
-                    return new StartupOperationResult(true, isEn ? "Startup entry updated." : "Элемент автозагрузки обновлен.");
-                }
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+                using var p = Process.Start(psi);
+                p?.WaitForExit(2500);
+                if (p?.ExitCode == 0)
+                    return new StartupOperationResult(true, isEn ? "Scheduled task updated." : "Задача планировщика обновлена.");
+                return new StartupOperationResult(false, isEn ? "Administrator privileges may be required for this task." : "Возможно, требуются права администратора для этой задачи.");
             }
             catch (Exception ex)
             {
@@ -125,45 +220,82 @@ public static class StartupService
             }
         }
 
-        // If not found in StartupApproved, write directly into Run key
-        try
+        if (entry.Hive == RegistryHive.LocalMachine && !StorageService.IsAdministrator())
         {
-            var root = entry.Source.StartsWith("HKCU") ? Registry.CurrentUser : Registry.LocalMachine;
-            using var key = root.OpenSubKey(
-                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", writable: true);
-            if (key != null)
-            {
-                if (enable)
-                    key.SetValue(entry.Name, entry.Command);
-                else
-                    key.DeleteValue(entry.Name, throwOnMissingValue: false);
-                return new StartupOperationResult(true, isEn ? "Startup entry updated." : "Элемент автозагрузки обновлен.");
-            }
-        }
-        catch (Exception ex)
-        {
-            return new StartupOperationResult(false, ex.Message);
-        }
-
-        return new StartupOperationResult(false, isEn ? "Could not modify entry." : "Не удалось изменить элемент.");
-    }
-
-    public static StartupOperationResult DeleteEntry(StartupEntry entry, bool isEn = false)
-    {
-        if (entry.Source.StartsWith("HKLM", StringComparison.OrdinalIgnoreCase) && !StorageService.IsAdministrator())
-        {
-            string reason = isEn 
-                ? "Skipped: administrator privileges required." 
+            string reason = isEn
+                ? "Skipped: administrator privileges required."
                 : "Пропущено: нужны права администратора.";
             return new StartupOperationResult(false, reason);
         }
 
         try
         {
-            var root = entry.Source.StartsWith("HKCU") ? Registry.CurrentUser : Registry.LocalMachine;
-            using var key = root.OpenSubKey(
-                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", writable: true);
-            key?.DeleteValue(entry.Name, throwOnMissingValue: false);
+            var root = GetRootKey(entry.Hive);
+            using var approvedKey = root.CreateSubKey(entry.ApprovedSubKey, writable: true);
+            if (approvedKey == null)
+            {
+                return new StartupOperationResult(false, isEn ? "Could not open StartupApproved key." : "Не удалось открыть раздел StartupApproved.");
+            }
+
+            var existing = approvedKey.GetValue(entry.Name) as byte[];
+            byte[] stateBytes = existing != null && existing.Length >= 12 ? (byte[])existing.Clone() : new byte[12];
+            stateBytes[0] = enable ? (byte)0x02 : (byte)0x03;
+
+            approvedKey.SetValue(entry.Name, stateBytes, RegistryValueKind.Binary);
+            return new StartupOperationResult(true, isEn ? "Startup entry updated." : "Элемент автозагрузки обновлен.");
+        }
+        catch (Exception ex)
+        {
+            return new StartupOperationResult(false, ex.Message);
+        }
+    }
+
+    public static StartupOperationResult DeleteEntry(StartupEntry entry, bool isEn = false)
+    {
+        if (entry.IsScheduledTask)
+        {
+            try
+            {
+                string schtasks = Path.Combine(Environment.SystemDirectory, "schtasks.exe");
+                var psi = new ProcessStartInfo(schtasks, $"/delete /tn \"{entry.TaskFullPath}\" /f")
+                {
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+                using var p = Process.Start(psi);
+                p?.WaitForExit(2500);
+                if (p?.ExitCode == 0)
+                    return new StartupOperationResult(true, isEn ? $"Removed task '{entry.Name}'." : $"Задача '{entry.Name}' удалена.");
+                return new StartupOperationResult(false, isEn ? "Failed to delete scheduled task (admin required?)." : "Не удалось удалить задачу (возможно, нужны права админа).");
+            }
+            catch (Exception ex)
+            {
+                return new StartupOperationResult(false, ex.Message);
+            }
+        }
+
+        if (entry.Hive == RegistryHive.LocalMachine && !StorageService.IsAdministrator())
+        {
+            string reason = isEn
+                ? "Skipped: administrator privileges required."
+                : "Пропущено: нужны права администратора.";
+            return new StartupOperationResult(false, reason);
+        }
+
+        try
+        {
+            var root = GetRootKey(entry.Hive);
+            using (var runKey = root.OpenSubKey(entry.RunSubKey, writable: true))
+            {
+                runKey?.DeleteValue(entry.Name, throwOnMissingValue: false);
+            }
+
+            using (var approvedKey = root.OpenSubKey(entry.ApprovedSubKey, writable: true))
+            {
+                approvedKey?.DeleteValue(entry.Name, throwOnMissingValue: false);
+            }
+
             return new StartupOperationResult(true, isEn ? $"Removed '{entry.Name}' from startup." : $"'{entry.Name}' удален из автозапуска.");
         }
         catch (Exception ex)

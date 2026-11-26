@@ -9,6 +9,9 @@
     <LangVersion>13</LangVersion>
     <RootNamespace>CoreSpectre</RootNamespace>
     <AssemblyName>CoreSpectre</AssemblyName>
+    <Version>1.2.0</Version>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <FileVersion>1.2.0.0</FileVersion>
     
     <!-- Single-File Executable Configuration -->
     <PublishSingleFile>true</PublishSingleFile>
@@ -25,10 +28,6 @@
     <Resource Include="Assets\Icons\logo.png" />
     <Resource Include="Assets\Icons\logo_dark.png" />
     <EmbeddedResource Include="Assets\Fonts\*.ttf" />
-    <Content Include="Assets\Fonts\*.ttf">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </Content>
     <Content Include="scripts\clean.bat" Link="clean.bat">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
@@ -43,7 +42,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <InternalsVisibleTo Include="CoreSpectre.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="System.Management" Version="9.0.0" />
   </ItemGroup>
 

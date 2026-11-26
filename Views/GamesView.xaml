@@ -14,7 +14,7 @@
 
         <!-- Header -->
         <StackPanel Grid.Row="0" Margin="0,0,0,16">
-            <TextBlock x:Name="GamesTabHeading" Text="Game Sentinel &amp; Catalog" FontSize="24" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
+            <TextBlock x:Name="GamesTabHeading" Text="Game Mode &amp; Catalog" FontSize="24" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
             <TextBlock x:Name="GamesTabSub" Text="Active games telemetry, priority acceleration, and installed disk libraries" FontSize="13.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,4,0,0"/>
         </StackPanel>
 

@@ -1,7 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using Microsoft.Win32;
 
 namespace CoreSpectre.Services;
 
@@ -23,17 +28,40 @@ public class UserSettingsModel
     public List<string> ActiveTabs { get; set; } = new() { "overview", "ram", "storage", "games", "settings" };
     public List<string> VaultTabs { get; set; } = new();
 
-    // Storage cleanup customization options (Task 7)
+    // Storage cleanup customization options
     public bool CleanTempFiles { get; set; } = true;
     public bool CleanSoftwareDistribution { get; set; } = true;
     public bool CleanLogsAndReports { get; set; } = true;
     public bool CleanDnsCache { get; set; } = true;
     public bool CleanRecycleBin { get; set; } = false;
+    public bool CleanGpuShaderCache { get; set; } = false;
+    public bool CleanBrowserCache { get; set; } = false;
     public bool CleanDismComponentCleanup { get; set; } = true;
     public bool CleanDismResetBase { get; set; } = false;
     public string StorageSortMode { get; set; } = "SizeDesc";
+    public int TempMinAgeDays { get; set; } = 0;
     public List<string> DisabledCleanupTargets { get; set; } = new();
+
+    // Extended usability, safety and automation features
+    public bool MinimizeToTray { get; set; } = true;
+    public bool RunAtStartup { get; set; } = false;
+    public bool EnableGlobalHotkeys { get; set; } = true;
+    public bool EnableThresholdAlerts { get; set; } = true;
+    public double HudLeft { get; set; } = 20.0;
+    public double HudTop { get; set; } = 20.0;
+    public string HudDriveLetter { get; set; } = "";
+    public List<string> ProcessWhitelist { get; set; } = new();
+    public List<string> CustomGameProcesses { get; set; } = new();
 }
+
+public record CoreSpectreBackupEnvelope(
+    string Format,
+    int Version,
+    string AppVersion,
+    DateTime ExportedAtUtc,
+    string Checksum,
+    UserSettingsModel Settings
+);
 
 public static class SettingsPersistenceService
 {
@@ -43,8 +71,34 @@ public static class SettingsPersistenceService
         PropertyNameCaseInsensitive = true
     };
 
+    private static readonly JsonSerializerOptions CanonicalJsonOptions = new()
+    {
+        WriteIndented = false,
+        PropertyNameCaseInsensitive = true
+    };
+
+    private static readonly object _fileLock = new();
+
+    /// <summary>
+    /// Optional override path used strictly for isolated automated tests so user settings on disk are never touched.
+    /// </summary>
+    internal static string? SettingsPathOverride { get; set; }
+
     public static event Action<string>? OnSettingsError;
     public static string? LastError { get; private set; }
+
+    public static string NormalizeDriveLetter(string? driveLetter, string fallback = "C")
+    {
+        if (!string.IsNullOrWhiteSpace(driveLetter))
+        {
+            string trimmed = driveLetter.Trim().TrimEnd('\\', ':');
+            if (trimmed.Length == 1 && char.IsAsciiLetter(trimmed[0]))
+            {
+                return char.ToUpperInvariant(trimmed[0]).ToString();
+            }
+        }
+        return fallback;
+    }
 
     /// <summary>
     /// Checks whether portable mode is enabled via the existence of 'portable.flag' in the app directory.
@@ -65,11 +119,17 @@ public static class SettingsPersistenceService
 
     /// <summary>
     /// Gets the target path to user_settings.json:
+    /// - If SettingsPathOverride is set: uses the override (test isolation).
     /// - If portable.flag exists: in app directory (portable mode).
     /// - Otherwise: in %APPDATA%\CoreSpectre\user_settings.json.
     /// </summary>
     public static string GetSettingsPath()
     {
+        if (!string.IsNullOrWhiteSpace(SettingsPathOverride))
+        {
+            return SettingsPathOverride;
+        }
+
         if (IsPortableMode())
         {
             return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "user_settings.json");
@@ -80,13 +140,9 @@ public static class SettingsPersistenceService
         return Path.Combine(coreSpectreDir, "user_settings.json");
     }
 
-    /// <summary>
-    /// Performs a one-time migration of user_settings.json from the app directory to %APPDATA%\CoreSpectre\
-    /// if the app is in standard mode and the target settings file does not yet exist.
-    /// </summary>
     public static void EnsureMigration()
     {
-        if (IsPortableMode()) return;
+        if (!string.IsNullOrWhiteSpace(SettingsPathOverride) || IsPortableMode()) return;
 
         try
         {
@@ -111,63 +167,281 @@ public static class SettingsPersistenceService
         }
     }
 
+    private static void SanitizeModel(UserSettingsModel model)
+    {
+        model.Language = string.Equals(model.Language, "RU", StringComparison.OrdinalIgnoreCase) ? "RU" : "EN";
+        model.Theme = string.Equals(model.Theme, "Light", StringComparison.OrdinalIgnoreCase) ? "Light" : "Dark";
+        model.TelemetryInterval = model.TelemetryInterval > 0 ? Math.Clamp(model.TelemetryInterval, 0.5, 30.0) : 1.0;
+        model.DiskWarningThresholdGb = model.DiskWarningThresholdGb > 0 ? Math.Clamp(model.DiskWarningThresholdGb, 1.0, 500.0) : 7.0;
+        model.CpuAlertThreshold = model.CpuAlertThreshold > 0 ? Math.Clamp(model.CpuAlertThreshold, 10.0, 100.0) : 90.0;
+        model.RamAlertThreshold = model.RamAlertThreshold > 0 ? Math.Clamp(model.RamAlertThreshold, 10.0, 100.0) : 85.0;
+        model.HudOpacity = model.HudOpacity > 0 ? Math.Clamp(model.HudOpacity, 20.0, 100.0) : 90.0;
+        model.TempMinAgeDays = Math.Clamp(model.TempMinAgeDays, 0, 90);
+        model.WatchedDriveLetter = NormalizeDriveLetter(model.WatchedDriveLetter);
+        model.HudDriveLetter = string.IsNullOrWhiteSpace(model.HudDriveLetter) ? "" : NormalizeDriveLetter(model.HudDriveLetter, "");
+        model.ActiveTabs ??= new List<string> { "overview", "ram", "storage", "games", "settings" };
+        model.VaultTabs ??= new List<string>();
+        model.DisabledCleanupTargets ??= new List<string>();
+        model.ProcessWhitelist ??= new List<string>();
+        model.CustomGameProcesses ??= new List<string>();
+
+        if (!model.ActiveTabs.Contains("settings"))
+        {
+            model.ActiveTabs.Add("settings");
+        }
+    }
+
     public static UserSettingsModel Load()
     {
-        try
+        lock (_fileLock)
         {
-            EnsureMigration();
-            string path = GetSettingsPath();
-            if (File.Exists(path))
+            try
             {
-                string json = File.ReadAllText(path);
-                var model = JsonSerializer.Deserialize<UserSettingsModel>(json, JsonOptions);
-                if (model != null)
+                EnsureMigration();
+                string path = GetSettingsPath();
+                if (File.Exists(path))
                 {
-                    model.ActiveTabs ??= new List<string> { "overview", "ram", "storage", "games", "settings" };
-                    model.VaultTabs ??= new List<string>();
-                    model.DisabledCleanupTargets ??= new List<string>();
-
-                    // Safety: ensure settings tab is never completely lost
-                    if (!model.ActiveTabs.Contains("settings"))
+                    string json = File.ReadAllText(path, Encoding.UTF8);
+                    var model = JsonSerializer.Deserialize<UserSettingsModel>(json, JsonOptions);
+                    if (model != null)
                     {
-                        model.ActiveTabs.Add("settings");
+                        SanitizeModel(model);
+                        LastError = null;
+                        return model;
                     }
-                    LastError = null;
-                    return model;
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            LastError = ex.Message;
-            Logger.Error($"Failed to load user settings: {ex.Message}", ex);
-            OnSettingsError?.Invoke($"Settings read error: {ex.Message}");
-        }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                Logger.Error($"Failed to load user settings: {ex.Message}", ex);
+                OnSettingsError?.Invoke($"Settings read error: {ex.Message}");
+            }
 
-        return new UserSettingsModel();
+            return new UserSettingsModel();
+        }
     }
 
     public static bool Save(UserSettingsModel model)
     {
+        lock (_fileLock)
+        {
+            try
+            {
+                SanitizeModel(model);
+                string path = GetSettingsPath();
+                string? dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+
+                string json = JsonSerializer.Serialize(model, JsonOptions);
+                string tempPath = path + $".tmp.{Guid.NewGuid():N}";
+                File.WriteAllText(tempPath, json, Encoding.UTF8);
+                File.Move(tempPath, path, overwrite: true);
+
+                LastError = null;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                Logger.Error($"Failed to save user settings: {ex.Message}", ex);
+                OnSettingsError?.Invoke($"Settings save error: {ex.Message}");
+                return false;
+            }
+        }
+    }
+
+    public static (bool Success, string Message) ExportBackup(string filePath, UserSettingsModel model, bool isEn = false)
+    {
         try
         {
-            string path = GetSettingsPath();
-            string? dir = Path.GetDirectoryName(path);
+            SanitizeModel(model);
+            string payloadJson = JsonSerializer.Serialize(model, CanonicalJsonOptions);
+            string checksum = ComputeSha256Hex(payloadJson);
+
+            var envelope = new CoreSpectreBackupEnvelope(
+                Format: "CoreSpectreBackup",
+                Version: 1,
+                AppVersion: "1.2.0",
+                ExportedAtUtc: DateTime.UtcNow,
+                Checksum: checksum,
+                Settings: model
+            );
+
+            string? dir = Path.GetDirectoryName(filePath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
             {
                 Directory.CreateDirectory(dir);
             }
 
-            string json = JsonSerializer.Serialize(model, JsonOptions);
-            File.WriteAllText(path, json);
-            LastError = null;
+            string outJson = JsonSerializer.Serialize(envelope, JsonOptions);
+            string tempPath = filePath + $".tmp.{Guid.NewGuid():N}";
+            File.WriteAllText(tempPath, outJson, Encoding.UTF8);
+            File.Move(tempPath, filePath, overwrite: true);
+
+            return (true, isEn
+                ? $"Backup saved to {Path.GetFileName(filePath)}."
+                : $"Резервная копия сохранена в {Path.GetFileName(filePath)}.");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to export .csb backup", ex);
+            return (false, isEn ? $"Backup export failed: {ex.Message}" : $"Ошибка экспорта .csb: {ex.Message}");
+        }
+    }
+
+    public static (bool Success, UserSettingsModel? Model, string Message) ImportBackup(string filePath, bool isEn = false)
+    {
+        try
+        {
+            if (!File.Exists(filePath))
+            {
+                return (false, null, isEn ? "Backup file not found." : "Файл резервной копии не найден.");
+            }
+
+            string raw = File.ReadAllText(filePath, Encoding.UTF8);
+            var envelope = JsonSerializer.Deserialize<CoreSpectreBackupEnvelope>(raw, JsonOptions);
+            if (envelope == null ||
+                !string.Equals(envelope.Format, "CoreSpectreBackup", StringComparison.Ordinal) ||
+                envelope.Version < 1 ||
+                envelope.Settings == null)
+            {
+                return (false, null, isEn ? "Invalid .csb backup format." : "Неверный формат файла резервной копии .csb.");
+            }
+
+            string expectedChecksum;
+            using (var doc = JsonDocument.Parse(raw))
+            {
+                if (doc.RootElement.TryGetProperty("Settings", out var settingsElement))
+                {
+                    expectedChecksum = ComputeSha256Hex(JsonSerializer.Serialize(settingsElement, CanonicalJsonOptions));
+                }
+                else
+                {
+                    expectedChecksum = ComputeSha256Hex(JsonSerializer.Serialize(envelope.Settings, CanonicalJsonOptions));
+                }
+            }
+            if (!string.Equals(expectedChecksum, envelope.Checksum, StringComparison.OrdinalIgnoreCase))
+            {
+                return (false, null, isEn
+                    ? "Backup checksum verification failed (file may be corrupted)."
+                    : "Контрольная сумма .csb не совпала (файл повреждён или изменён).");
+            }
+
+            SanitizeModel(envelope.Settings);
+            return (true, envelope.Settings, isEn
+                ? $"Loaded backup from {Path.GetFileName(filePath)}."
+                : $"Настройки загружены из {Path.GetFileName(filePath)}.");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to import .csb backup", ex);
+            return (false, null, isEn ? $"Backup import failed: {ex.Message}" : $"Ошибка чтения .csb: {ex.Message}");
+        }
+    }
+
+    private static string ComputeSha256Hex(string text)
+    {
+        byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes(text));
+        return Convert.ToHexString(bytes);
+    }
+
+    [DllImport("shell32.dll")]
+    private static extern void SHChangeNotify(uint wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
+
+    /// <summary>
+    /// Registers per-user HKCU file association for .csb backups so double-clicking opens CoreSpectre cleanly without admin rights.
+    /// </summary>
+    public static void EnsureCsbFileAssociation()
+    {
+        try
+        {
+            string? exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
+            if (string.IsNullOrWhiteSpace(exePath) ||
+                !File.Exists(exePath) ||
+                !exePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+                Path.GetFileName(exePath).Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            string expectedCommand = $"\"{exePath}\" \"%1\"";
+            string expectedIcon = $"\"{exePath}\",0";
+            bool changed = false;
+
+            using (var extKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\.csb", writable: true))
+            {
+                if (!string.Equals(extKey?.GetValue(null) as string, "CoreSpectre.Backup", StringComparison.Ordinal))
+                {
+                    extKey?.SetValue(null, "CoreSpectre.Backup", RegistryValueKind.String);
+                    changed = true;
+                }
+            }
+
+            using (var progIdKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\CoreSpectre.Backup", writable: true))
+            {
+                if (!string.Equals(progIdKey?.GetValue(null) as string, "CoreSpectre Settings Backup", StringComparison.Ordinal))
+                {
+                    progIdKey?.SetValue(null, "CoreSpectre Settings Backup", RegistryValueKind.String);
+                    changed = true;
+                }
+            }
+
+            using (var iconKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\CoreSpectre.Backup\DefaultIcon", writable: true))
+            {
+                if (!string.Equals(iconKey?.GetValue(null) as string, expectedIcon, StringComparison.OrdinalIgnoreCase))
+                {
+                    iconKey?.SetValue(null, expectedIcon, RegistryValueKind.String);
+                    changed = true;
+                }
+            }
+
+            using (var cmdKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\CoreSpectre.Backup\shell\open\command", writable: true))
+            {
+                if (!string.Equals(cmdKey?.GetValue(null) as string, expectedCommand, StringComparison.OrdinalIgnoreCase))
+                {
+                    cmdKey?.SetValue(null, expectedCommand, RegistryValueKind.String);
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                SHChangeNotify(0x08000000, 0x0000, IntPtr.Zero, IntPtr.Zero);
+                Logger.Info($"[Settings] Registered HKCU .csb file association -> {exePath}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug($"Failed to register .csb association: {ex.Message}");
+        }
+    }
+
+    public static bool SetRunAtStartup(bool enable)
+    {
+        try
+        {
+            using var runKey = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", writable: true);
+            if (runKey == null) return false;
+
+            if (enable)
+            {
+                string? exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
+                if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath)) return false;
+                runKey.SetValue("CoreSpectre", $"\"{exePath}\" --minimized", RegistryValueKind.String);
+            }
+            else
+            {
+                runKey.DeleteValue("CoreSpectre", throwOnMissingValue: false);
+            }
             return true;
         }
         catch (Exception ex)
         {
-            LastError = ex.Message;
-            Logger.Error($"Failed to save user settings: {ex.Message}", ex);
-            OnSettingsError?.Invoke($"Settings save error: {ex.Message}");
+            Logger.Warn($"SetRunAtStartup failed: {ex.Message}");
             return false;
         }
     }

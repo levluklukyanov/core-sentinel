@@ -3,7 +3,7 @@ using Xunit;
 
 namespace CoreSpectre.Tests;
 
-public class GameSentinelTests
+public class GameBoostTests
 {
     [Theory]
     [InlineData("cs2", "", false, true, "Counter-Strike 2")]
@@ -15,18 +15,37 @@ public class GameSentinelTests
     [InlineData("roblox", "", false, true, "Roblox")]
     [InlineData("terraria", "", false, true, "Terraria")]
     [InlineData("notepad", "Notes.txt", false, false, "")]
+    [InlineData("notepad", "Unity Documentation", false, false, "")]
+    [InlineData("javaw", "IntelliJ IDEA", false, false, "")]
     [InlineData("chrome", "Google - Chrome", false, false, "")]
+    [InlineData("chrome", "Dota 2 - Twitch", false, false, "")]
+    [InlineData("msedge", "Minecraft Wiki", false, false, "")]
+    [InlineData("discord", "Counter-Strike 2 Voice", false, false, "")]
     [InlineData("explorer", "", false, false, "")]
     public void ResolveGameIdentity_CorrectlyIdentifiesProcesses(
         string processName, string windowTitle, bool isRu, bool expectedIsGame, string expectedDisplayName)
     {
-        var (isGame, displayName) = GameSentinelService.ResolveGameIdentity(processName, windowTitle, isRu);
+        var (isGame, displayName) = GameBoostService.ResolveGameIdentity(processName, windowTitle, isRu);
 
         Assert.Equal(expectedIsGame, isGame);
         if (expectedIsGame)
         {
             Assert.Equal(expectedDisplayName, displayName);
         }
+    }
+
+    [Fact]
+    public void ResolveGameIdentity_SupportsCustomGamesAndExclusions()
+    {
+        var custom = new[] { "valorant" };
+        var excluded = new[] { "cs2" };
+
+        var (isValGame, valName) = GameBoostService.ResolveGameIdentity("valorant", "VALORANT", false, custom, excluded);
+        Assert.True(isValGame);
+        Assert.Equal("VALORANT", valName);
+
+        var (isCsGame, _) = GameBoostService.ResolveGameIdentity("cs2", "", false, custom, excluded);
+        Assert.False(isCsGame);
     }
 
     [Theory]
@@ -38,7 +57,7 @@ public class GameSentinelTests
     public void IsMinecraftLauncher_ExcludesLaunchersFromInstalledGames(
         string name, string path, string category, bool expectedIsLauncher)
     {
-        bool actual = GameSentinelService.IsMinecraftLauncher(name, path, category);
+        bool actual = GameBoostService.IsMinecraftLauncher(name, path, category);
         Assert.Equal(expectedIsLauncher, actual);
     }
 }

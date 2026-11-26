@@ -6,6 +6,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-11-26
+
+### Added
+- **Windows Standby List & CompactOS with Seamless UAC Elevation:** Added on-demand UAC elevation over ACL-protected Named Pipes (`--elevated-worker`) for Standby List purging (`NtSetSystemInformation`) and Windows CompactOS compression (`compact.exe /CompactOS`) without closing the main window.
+- **Reversible CPU Optimization (`EcoQoS` + Rollback):** Background throttling now stores original process priorities and restores them cleanly via **Restore CPU**.
+- **Disk Analyzer, Dry-Run Preview & Temp Age Filter:** Inspect heavy folders, files >100 MB, backup archives, preview largest files per cleanup target, and filter `%TEMP%` cleanup by file age (`All`, `>3d`, `>7d`).
+- **SHA-256 Verified `.csb` Settings Backups & Diagnostics Export:** Added `.csb` backup export/import with HKCU double-click file association and `.txt` hardware report export.
+- **Tray Minimize, Global Hotkeys & Autostart:** Added system tray minimization, `Ctrl+Shift+H` / `L` / `P` hotkeys, custom process whitelist/game list, and optional Windows startup launch (`--minimized`).
+- **MemoryService Unit Tests:** Added `MemoryServiceTests` covering protected process filtering, memory telemetry, and non-elevated Standby List permission checks.
+
+### Changed
+- **Renamed Game Sentinel to Game Mode (`GameBoostService`):** Unified naming across UI, localization dictionaries, service classes, tests, and documentation.
+- **Streamlined UI & Architecture:** Removed redundant active process tables, unused ViewModels (`CommunityToolkit.Mvvm`), duplicate font deployment copies, and dead localization keys.
+
+### Fixed & Hardened
+- **CPU Throttling & CompactOS Reliability:** Fixed Win32 `ProcessPriorityClass` bitmask comparison so background processes running at `Normal` priority are properly throttled; fixed `IsCompactOsEnabledAsync` OEM encoding + exit code `103` detection on localized Windows and eliminated `compact.exe` stdout deadlock.
+- **HUD Telemetry & Game Detection Guards:** Shared a single `HardwareTelemetry` snapshot pipeline with `TelemetryHudWindow`, cached `GPU Engine` performance counters safely across polls, and excluded browsers/chats/IDEs from false-positive window-title game detection.
+
+### Security & Reliability
+- **ACL Named Pipe IPC:** Eliminated on-disk job/result path passing for `--elevated-worker` by streaming jobs and logs strictly over a user-SID/Administrators-restricted Named Pipe.
+- **Protected Process Safeguards:** `PurgeMemory` now skips critical Windows system, audio (`audiodg`), and Defender (`MsMpEng`) processes to prevent unnecessary page-fault stutters.
+- **Hardened Exception & Single-Instance Handling:** Tightened `DispatcherUnhandledException` benign filter to explicit clipboard/window COM/Win32 codes, converted `ResetSettingsAsync` to `async Task`, and enforced single-instance process activation.
+
+---
+
+## [1.1.1] - 2026-11-25
+
+### Fixed
+- Resolved MVVM regressions from the initial decomposition and restored per-target cleanup checkboxes in `StorageView`.
+- Implemented headless UAC cleanup worker over ACL Named Pipes and fixed duplicate instance accumulation.
+- Refined UI layout, theme icon resources, UTC offset footer format, and Tab Vault restoration controls.
+
+---
+
 ## [1.1.0] - 2026-11-24
 
 ### Added

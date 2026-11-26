@@ -12,15 +12,34 @@ public class LocalizationTests
         Assert.True(LocalizationService.IsEnglish);
         Assert.False(LocalizationService.IsRussian);
 
-        string navOverviewEn = LocalizationService.Get("Nav.Overview");
-        Assert.Equal("Overview", navOverviewEn);
+        string dashTitleEn = LocalizationService.Get("Dash.Title");
+        Assert.Equal("System Overview", dashTitleEn);
 
         LocalizationService.CurrentLanguage = "RU";
         Assert.True(LocalizationService.IsRussian);
         Assert.False(LocalizationService.IsEnglish);
 
-        string navOverviewRu = LocalizationService.Get("Nav.Overview");
-        Assert.Equal("Обзор", navOverviewRu);
+        string dashTitleRu = LocalizationService.Get("Dash.Title");
+        Assert.Equal("Обзор системы", dashTitleRu);
+    }
+
+    [Fact]
+    public void Localization_AllKeysHaveValidEnglishAndRussianTranslations()
+    {
+        Assert.NotEmpty(LocalizationService.Keys);
+        foreach (string key in LocalizationService.Keys)
+        {
+            LocalizationService.CurrentLanguage = "EN";
+            string en = LocalizationService.Get(key);
+            Assert.False(string.IsNullOrWhiteSpace(en), $"Empty EN translation for {key}");
+            Assert.NotEqual(key, en);
+
+            LocalizationService.CurrentLanguage = "RU";
+            string ru = LocalizationService.Get(key);
+            Assert.False(string.IsNullOrWhiteSpace(ru), $"Empty RU translation for {key}");
+            Assert.NotEqual(key, ru);
+        }
+        LocalizationService.CurrentLanguage = "EN";
     }
 
     [Fact]

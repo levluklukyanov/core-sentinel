@@ -1,7 +1,12 @@
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace CoreSpectre.Services;
 
@@ -40,15 +45,26 @@ public record StorageCleanupOptions(
     bool CleanLogsAndReports = true,
     bool CleanDnsCache = true,
     bool CleanRecycleBin = false,
+    bool CleanGpuShaderCache = false,
+    bool CleanBrowserCache = false,
     bool CleanDismComponentCleanup = true,
     bool CleanDismResetBase = false,
-    HashSet<string>? DisabledTargetKeys = null
+    HashSet<string>? DisabledTargetKeys = null,
+    int TempMinAgeDays = 0
 );
 
 public record LargeDirectory(
     string Path,
     long SizeBytes,
-    string FormattedSize
+    string FormattedSize,
+    bool IsBackupNote = false
+);
+
+public record TargetFilePreview(
+    string Name,
+    string FullPath,
+    string FormattedSize,
+    string LastModified
 );
 
 public record ElevatedCleanupJob(
@@ -56,11 +72,19 @@ public record ElevatedCleanupJob(
     bool CleanTemp,
     bool CleanSoftwareDistribution,
     bool CleanLogsAndReports,
+    bool CleanGpuShaderCache,
+    bool CleanBrowserCache,
     bool CleanDismComponentCleanup,
     bool CleanDismResetBase,
     List<string> DisabledTargetKeys,
-    string ProgressLogPath,
-    string ResultJsonPath
+    string Action = "cleanup",
+    int TempMinAgeDays = 0
+);
+
+public record ElevatedWorkerRunResult(
+    bool ElevationCancelled,
+    CleanResult? Result,
+    string? ErrorMessage
 );
 
 public static class StorageService
@@ -83,15 +107,65 @@ public static class StorageService
         IntPtr hTemplateFile
     );
 
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern uint GetFinalPathNameByHandleW(
+        IntPtr hFile,
+        StringBuilder lpszFilePath,
+        uint cchFilePath,
+        uint dwFlags
+    );
+
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr hObject);
 
     private const uint GENERIC_DELETE = 0x00010000;
+    private const uint FILE_READ_ATTRIBUTES = 0x00000080;
     private const uint FILE_SHARE_READ = 0x00000001;
     private const uint FILE_SHARE_WRITE = 0x00000002;
     private const uint FILE_SHARE_DELETE = 0x00000004;
     private const uint OPEN_EXISTING = 3;
+    private const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+    private const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+
+    private static readonly Regex ValidPipeRegex = new(@"^CoreSpectre_Elev_[0-9a-fA-F]{32}$", RegexOptions.Compiled);
+
+    public static bool IsValidPipeName(string? pipeName) =>
+        !string.IsNullOrWhiteSpace(pipeName) && ValidPipeRegex.IsMatch(pipeName);
+
+    public static NamedPipeServerStream CreateSecurePipeServer(string pipeName)
+    {
+        if (!IsValidPipeName(pipeName))
+        {
+            throw new ArgumentException("Invalid elevated pipe name.", nameof(pipeName));
+        }
+
+        var pipeSecurity = new PipeSecurity();
+        using var identity = WindowsIdentity.GetCurrent();
+        if (identity.User != null)
+        {
+            pipeSecurity.AddAccessRule(new PipeAccessRule(
+                identity.User,
+                PipeAccessRights.FullControl,
+                AccessControlType.Allow));
+        }
+
+        var adminsSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        pipeSecurity.AddAccessRule(new PipeAccessRule(
+            adminsSid,
+            PipeAccessRights.FullControl,
+            AccessControlType.Allow));
+
+        return NamedPipeServerStreamAcl.Create(
+            pipeName,
+            PipeDirection.InOut,
+            maxNumberOfServerInstances: 1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous,
+            inBufferSize: 8192,
+            outBufferSize: 8192,
+            pipeSecurity);
+    }
 
     public static bool IsAdministrator()
     {
@@ -107,9 +181,21 @@ public static class StorageService
         }
     }
 
+    public static string ValidateDriveLetter(string? driveLetter, string? fallback = null)
+    {
+        if (!string.IsNullOrWhiteSpace(driveLetter))
+        {
+            string trimmed = driveLetter.Trim().TrimEnd('\\', ':');
+            if (trimmed.Length == 1 && char.IsAsciiLetter(trimmed[0]))
+            {
+                return char.ToUpperInvariant(trimmed[0]).ToString();
+            }
+        }
+        return !string.IsNullOrWhiteSpace(fallback) ? fallback : HardwareTelemetry.GetSystemDriveLetter();
+    }
+
     public static bool CanDeleteFile(FileInfo file)
     {
-        // Live CBS.log is locked by Windows TrustedInstaller permanently
         if (string.Equals(file.Name, "CBS.log", StringComparison.OrdinalIgnoreCase))
             return false;
 
@@ -121,7 +207,7 @@ public static class StorageService
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 IntPtr.Zero,
                 OPEN_EXISTING,
-                0,
+                FILE_FLAG_OPEN_REPARSE_POINT,
                 IntPtr.Zero
             );
 
@@ -139,11 +225,61 @@ public static class StorageService
         }
     }
 
+    private static bool IsFinalPathWithinRoot(string path, string normalizedAllowedRoot, bool isDirectory)
+    {
+        try
+        {
+            uint flags = FILE_FLAG_OPEN_REPARSE_POINT | (isDirectory ? FILE_FLAG_BACKUP_SEMANTICS : 0u);
+            IntPtr handle = CreateFileW(
+                path,
+                FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                IntPtr.Zero,
+                OPEN_EXISTING,
+                flags,
+                IntPtr.Zero);
+
+            if (handle == IntPtr.Zero || handle == new IntPtr(-1))
+                return false;
+
+            try
+            {
+                var sb = new StringBuilder(1024);
+                uint len = GetFinalPathNameByHandleW(handle, sb, (uint)sb.Capacity, 0);
+                if (len == 0) return false;
+                if (len >= sb.Capacity)
+                {
+                    sb = new StringBuilder((int)len + 2);
+                    len = GetFinalPathNameByHandleW(handle, sb, (uint)sb.Capacity, 0);
+                    if (len == 0) return false;
+                }
+
+                string resolved = sb.ToString();
+                if (resolved.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+                    resolved = @"\\" + resolved[8..];
+                else if (resolved.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
+                    resolved = resolved[4..];
+
+                resolved = Path.GetFullPath(resolved).TrimEnd(Path.DirectorySeparatorChar);
+                return resolved.Equals(normalizedAllowedRoot, StringComparison.OrdinalIgnoreCase) ||
+                       resolved.StartsWith(normalizedAllowedRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                CloseHandle(handle);
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public static DiskInfo? GetDriveInfo(string driveLetter = "C")
     {
         try
         {
-            string clean = driveLetter.TrimEnd('\\', ':');
+            string clean = ValidateDriveLetter(driveLetter, "C");
             var drive = new DriveInfo($"{clean}:\\");
             if (!drive.IsReady) return null;
 
@@ -184,6 +320,72 @@ public static class StorageService
         {
             return false;
         }
+    }
+
+    private static IEnumerable<string> GetGpuShaderCacheDirectories()
+    {
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string localLow = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "AppData", "LocalLow");
+        return new[]
+        {
+            Path.Combine(localAppData, "D3DSCache"),
+            Path.Combine(localAppData, "NVIDIA", "DXCache"),
+            Path.Combine(localAppData, "NVIDIA", "GLCache"),
+            Path.Combine(localLow, "NVIDIA", "PerDriverVersion", "DXCache"),
+            Path.Combine(localAppData, "AMD", "DxCache"),
+            Path.Combine(localAppData, "AMD", "GLCache")
+        };
+    }
+
+    private static IEnumerable<string> GetBrowserCacheDirectories()
+    {
+        var dirs = new List<string>();
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+        string[] chromiumRoots =
+        [
+            Path.Combine(localAppData, "Google", "Chrome", "User Data"),
+            Path.Combine(localAppData, "Microsoft", "Edge", "User Data"),
+            Path.Combine(localAppData, "Yandex", "YandexBrowser", "User Data"),
+            Path.Combine(localAppData, "BraveSoftware", "Brave-Browser", "User Data")
+        ];
+
+        foreach (var root in chromiumRoots)
+        {
+            if (!Directory.Exists(root)) continue;
+            try
+            {
+                foreach (var profile in Directory.EnumerateDirectories(root))
+                {
+                    string name = Path.GetFileName(profile);
+                    if (!name.Equals("Default", StringComparison.OrdinalIgnoreCase) &&
+                        !name.StartsWith("Profile ", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    string c1 = Path.Combine(profile, "Cache", "Cache_Data");
+                    string c2 = Path.Combine(profile, "Code Cache");
+                    if (Directory.Exists(c1)) dirs.Add(c1);
+                    if (Directory.Exists(c2)) dirs.Add(c2);
+                }
+            }
+            catch { }
+        }
+
+        string ffProfiles = Path.Combine(localAppData, "Mozilla", "Firefox", "Profiles");
+        if (Directory.Exists(ffProfiles))
+        {
+            try
+            {
+                foreach (var prof in Directory.EnumerateDirectories(ffProfiles))
+                {
+                    string c2 = Path.Combine(prof, "cache2", "entries");
+                    if (Directory.Exists(c2)) dirs.Add(c2);
+                }
+            }
+            catch { }
+        }
+
+        return dirs;
     }
 
     public static List<CleanableTarget> ScanTempLocations(bool isEn = true, UserSettingsModel? settings = null)
@@ -298,7 +500,43 @@ public static class StorageService
             }
         }
 
-        // 8. Recycle Bin
+        // 8. GPU & DirectX Shader Caches
+        long gpuBytes = 0;
+        int gpuFiles = 0;
+        foreach (var dir in GetGpuShaderCacheDirectories())
+        {
+            var (b, c) = GetDirectorySizeSafe(dir, cleanableOnly: true);
+            gpuBytes += b;
+            gpuFiles += c;
+        }
+        targets.Add(new CleanableTarget(
+            isEn ? "GPU & DirectX Shader Caches" : "Кэш шейдеров GPU и DirectX",
+            "D3DSCache / NVIDIA / AMD",
+            gpuBytes,
+            gpuFiles,
+            RequiresAdmin: false,
+            IsSelected: IsSelectedFor("gpu_shader", settings.CleanGpuShaderCache),
+            Key: "gpu_shader"));
+
+        // 9. Browser HTTP Caches (Chrome, Edge, Yandex, Brave)
+        long browserBytes = 0;
+        int browserFiles = 0;
+        foreach (var dir in GetBrowserCacheDirectories())
+        {
+            var (b, c) = GetDirectorySizeSafe(dir, cleanableOnly: true);
+            browserBytes += b;
+            browserFiles += c;
+        }
+        targets.Add(new CleanableTarget(
+            isEn ? "Browser HTTP Caches (Chrome/Edge/Yandex)" : "Кэш браузеров (Chrome/Edge/Yandex)",
+            "User Data\\Default\\Cache",
+            browserBytes,
+            browserFiles,
+            RequiresAdmin: false,
+            IsSelected: IsSelectedFor("browser_cache", settings.CleanBrowserCache),
+            Key: "browser_cache"));
+
+        // 10. Recycle Bin
         var (binBytes, binCount) = GetRecycleBinSize();
         targets.Add(new CleanableTarget(isEn ? "Windows Recycle Bin (All Drives)" : "Корзина Windows (Все диски)", "$Recycle.Bin", binBytes, binCount, RequiresAdmin: false, IsSelected: IsSelectedFor("recycle_bin", settings.CleanRecycleBin), Key: "recycle_bin"));
 
@@ -326,91 +564,161 @@ public static class StorageService
         return (binBytes, binCount);
     }
 
-    public static CleanResult CleanDirectoryContents(string path)
+    public static CleanResult CleanDirectoryContents(string path, CancellationToken cancellationToken = default, int minAgeDays = 0)
     {
         long freed = 0;
         int count = 0;
         int skipped = 0;
+        DateTime? cutoffUtc = minAgeDays > 0 ? DateTime.UtcNow.AddDays(-minAgeDays) : null;
 
         if (!Directory.Exists(path)) return new CleanResult(0, 0, 0);
 
-        var enumOpts = new EnumerationOptions
-        {
-            IgnoreInaccessible = true,
-            RecurseSubdirectories = true,
-            AttributesToSkip = FileAttributes.ReparsePoint
-        };
-
+        string allowedRoot;
         try
         {
-            var dir = new DirectoryInfo(path);
-            foreach (var file in dir.EnumerateFiles("*", enumOpts))
-            {
-                try
-                {
-                    if (IsProtectedSelfExtractionPath(file.FullName))
-                    {
-                        continue;
-                    }
+            allowedRoot = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+        }
+        catch
+        {
+            return new CleanResult(0, 0, 0);
+        }
 
-                    // Live CBS.log is locked by Windows TrustedInstaller and can never be deleted while running
-                    if (string.Equals(file.Name, "CBS.log", StringComparison.OrdinalIgnoreCase))
+        if (!IsFinalPathWithinRoot(allowedRoot, allowedRoot, isDirectory: true))
+        {
+            Logger.Warn($"[StorageService] Skipped cleanup root (reparse/path mismatch): {allowedRoot}");
+            return new CleanResult(0, 0, 0);
+        }
+
+        var dirStack = new Stack<string>();
+        var dirsBottomUp = new List<string>();
+        dirStack.Push(allowedRoot);
+
+        while (dirStack.Count > 0)
+        {
+            if (cancellationToken.IsCancellationRequested) break;
+            string currentDir = dirStack.Pop();
+
+            try
+            {
+                var currentInfo = new DirectoryInfo(currentDir);
+                if ((currentInfo.Attributes & FileAttributes.ReparsePoint) != 0 ||
+                    IsProtectedSelfExtractionPath(currentDir) ||
+                    !IsFinalPathWithinRoot(currentDir, allowedRoot, isDirectory: true))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(currentDir, allowedRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    dirsBottomUp.Add(currentDir);
+                }
+
+                foreach (var file in currentInfo.EnumerateFiles())
+                {
+                    if (cancellationToken.IsCancellationRequested) break;
+                    try
+                    {
+                        if ((file.Attributes & FileAttributes.ReparsePoint) != 0 ||
+                            IsProtectedSelfExtractionPath(file.FullName))
+                        {
+                            continue;
+                        }
+
+                        if (string.Equals(file.Name, "CBS.log", StringComparison.OrdinalIgnoreCase))
+                        {
+                            skipped++;
+                            continue;
+                        }
+
+                        if (!IsFinalPathWithinRoot(file.FullName, allowedRoot, isDirectory: false))
+                        {
+                            skipped++;
+                            continue;
+                        }
+
+                        if (cutoffUtc.HasValue && file.LastWriteTimeUtc > cutoffUtc.Value)
+                        {
+                            continue;
+                        }
+
+                        if ((file.Attributes & FileAttributes.ReadOnly) != 0)
+                        {
+                            file.Attributes &= ~FileAttributes.ReadOnly;
+                        }
+
+                        long sz = file.Length;
+                        file.Delete();
+                        freed += sz;
+                        count++;
+                    }
+                    catch
                     {
                         skipped++;
-                        continue;
                     }
-
-                    // Remove ReadOnly attribute if set
-                    if ((file.Attributes & FileAttributes.ReadOnly) != 0)
-                    {
-                        file.Attributes &= ~FileAttributes.ReadOnly;
-                    }
-
-                    long sz = file.Length;
-                    file.Delete();
-                    freed += sz;
-                    count++;
                 }
-                catch
+
+                foreach (var sub in currentInfo.EnumerateDirectories())
                 {
-                    skipped++;
+                    if (cancellationToken.IsCancellationRequested) break;
+                    try
+                    {
+                        if ((sub.Attributes & FileAttributes.ReparsePoint) == 0 &&
+                            !IsProtectedSelfExtractionPath(sub.FullName) &&
+                            IsFinalPathWithinRoot(sub.FullName, allowedRoot, isDirectory: true))
+                        {
+                            dirStack.Push(sub.FullName);
+                        }
+                    }
+                    catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
                 }
             }
-
-            foreach (var sub in dir.EnumerateDirectories())
-            {
-                try
-                {
-                    if ((sub.Attributes & FileAttributes.ReparsePoint) != 0 || IsProtectedSelfExtractionPath(sub.FullName))
-                    {
-                        continue;
-                    }
-                    sub.Delete(true);
-                }
-                catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
-            }
+            catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
         }
-        catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
+
+        // Remove emptied subdirectories bottom-up using non-recursive deletion (no junction traversal)
+        for (int i = dirsBottomUp.Count - 1; i >= 0; i--)
+        {
+            if (cancellationToken.IsCancellationRequested) break;
+            string subPath = dirsBottomUp[i];
+            try
+            {
+                if (Directory.Exists(subPath) && IsFinalPathWithinRoot(subPath, allowedRoot, isDirectory: true))
+                {
+                    var di = new DirectoryInfo(subPath);
+                    if ((di.Attributes & FileAttributes.ReparsePoint) == 0 &&
+                        !di.EnumerateFileSystemInfos().Any())
+                    {
+                        Directory.Delete(subPath, recursive: false);
+                    }
+                }
+            }
+            catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
+        }
 
         return new CleanResult(freed, count, skipped);
     }
 
-    public static async Task<CleanResult> ExecuteDeepCleanupAsync(bool isEn, Action<string> logCallback, StorageCleanupOptions? options = null, bool adminStagesOnly = false)
+    public static async Task<CleanResult> ExecuteDeepCleanupAsync(
+        bool isEn,
+        Action<string> logCallback,
+        StorageCleanupOptions? options = null,
+        bool adminStagesOnly = false,
+        CancellationToken cancellationToken = default)
     {
         var loadedSettings = SettingsPersistenceService.Load();
-        if (options == null)
-        {
-            options = new StorageCleanupOptions(
-                loadedSettings.CleanTempFiles,
-                loadedSettings.CleanSoftwareDistribution,
-                loadedSettings.CleanLogsAndReports,
-                loadedSettings.CleanDnsCache,
-                loadedSettings.CleanRecycleBin,
-                loadedSettings.CleanDismComponentCleanup,
-                loadedSettings.CleanDismResetBase,
-                new HashSet<string>(loadedSettings.DisabledCleanupTargets ?? new List<string>(), StringComparer.OrdinalIgnoreCase)
-            );
-        }
+        options ??= new StorageCleanupOptions(
+            loadedSettings.CleanTempFiles,
+            loadedSettings.CleanSoftwareDistribution,
+            loadedSettings.CleanLogsAndReports,
+            loadedSettings.CleanDnsCache,
+            loadedSettings.CleanRecycleBin,
+            loadedSettings.CleanGpuShaderCache,
+            loadedSettings.CleanBrowserCache,
+            loadedSettings.CleanDismComponentCleanup,
+            loadedSettings.CleanDismResetBase,
+            new HashSet<string>(loadedSettings.DisabledCleanupTargets ?? new List<string>(), StringComparer.OrdinalIgnoreCase),
+            loadedSettings.TempMinAgeDays
+        );
 
         var disabled = options.DisabledTargetKeys ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -422,68 +730,70 @@ public static class StorageService
         bool isAdmin = IsAdministrator();
 
         // Stage 0: Restore Point creation
-        if (isAdmin)
+        if (!cancellationToken.IsCancellationRequested)
         {
-            logCallback(isEn
-                ? "[0/6] Creating Windows System Restore Point for safe rollback..."
-                : "[0/6] Создание системной точки восстановления Windows для безопасного отката...");
-            var (created, reason) = await CreateRestorePointDetailedAsync("CoreSpectre Before Deep Cleanup");
-            if (created)
+            if (isAdmin)
             {
                 logCallback(isEn
-                    ? "[Restore Point] Successfully created 'CoreSpectre Before Deep Cleanup'."
-                    : "[Точка восстановления] Успешно создана: 'CoreSpectre Before Deep Cleanup'.");
+                    ? "[0/7] Creating Windows System Restore Point for safe rollback..."
+                    : "[0/7] Создание системной точки восстановления Windows для безопасного отката...");
+                var (created, reason) = await CreateRestorePointDetailedAsync("CoreSpectre Before Deep Cleanup", cancellationToken);
+                if (created)
+                {
+                    logCallback(isEn
+                        ? "[Restore Point] Successfully created 'CoreSpectre Before Deep Cleanup'."
+                        : "[Точка восстановления] Успешно создана: 'CoreSpectre Before Deep Cleanup'.");
+                }
+                else
+                {
+                    string detail = string.IsNullOrWhiteSpace(reason)
+                        ? (isEn ? "System Protection disabled or 24h checkpoint limit reached" : "защита системы отключена или сработал суточный лимит Windows")
+                        : reason;
+                    logCallback(isEn
+                        ? $"[Restore Point] Skipped ({detail})."
+                        : $"[Точка восстановления] Пропущено ({detail}).");
+                }
             }
             else
             {
-                string detail = string.IsNullOrWhiteSpace(reason)
-                    ? (isEn ? "System Protection disabled or 24h checkpoint limit reached" : "защита системы отключена или сработал суточный лимит Windows")
-                    : reason;
                 logCallback(isEn
-                    ? $"[Restore Point] Skipped ({detail})."
-                    : $"[Точка восстановления] Пропущено ({detail}).");
+                    ? "[0/7] System Restore Point: skipped (administrator privileges required)."
+                    : "[0/7] Точка восстановления: пропущено (для автоматического создания точки перед очисткой нужны права администратора).");
             }
-        }
-        else
-        {
-            logCallback(isEn
-                ? "[0/6] System Restore Point: skipped (administrator privileges required)."
-                : "[0/6] Точка восстановления: пропущено (для автоматического создания точки перед очисткой нужны права администратора).");
         }
 
         // Stage 1: Temp Folders
         bool cleanUserTemp = !adminStagesOnly && options.CleanTemp && !disabled.Contains("user_temp");
         bool cleanWinTemp = options.CleanTemp && !disabled.Contains("win_temp");
-        if (cleanUserTemp || cleanWinTemp)
+        if (!cancellationToken.IsCancellationRequested && (cleanUserTemp || cleanWinTemp))
         {
             if (!adminStagesOnly)
             {
                 logCallback(isEn
-                    ? "[1/6] Cleaning temporary folders (%TEMP% and Windows Temp)..."
-                    : "[1/6] Очистка временных папок (%TEMP% и Windows Temp)...");
+                    ? "[1/7] Cleaning temporary folders (%TEMP% and Windows Temp)..."
+                    : "[1/7] Очистка временных папок (%TEMP% и Windows Temp)...");
             }
             else if (cleanWinTemp)
             {
                 logCallback(isEn
-                    ? "[1/6] Cleaning protected Windows Temp folder..."
-                    : "[1/6] Очистка системной папки Windows Temp...");
+                    ? "[1/7] Cleaning protected Windows Temp folder..."
+                    : "[1/7] Очистка системной папки Windows Temp...");
             }
 
             if (cleanUserTemp)
             {
-                string userTemp = Path.GetTempPath();
-                var r1 = CleanDirectoryContents(userTemp);
+                var r1 = CleanDirectoryContents(Path.GetTempPath(), cancellationToken, options.TempMinAgeDays);
                 totalFreed += r1.BytesFreed;
                 totalRemoved += r1.FilesRemoved;
                 totalSkipped += r1.FilesSkipped;
             }
 
-            if (cleanWinTemp)
+            if (cleanWinTemp && !cancellationToken.IsCancellationRequested)
             {
                 string winTemp = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp");
                 if (isAdmin)
                 {
-                    var r2 = CleanDirectoryContents(winTemp);
+                    var r2 = CleanDirectoryContents(winTemp, cancellationToken, options.TempMinAgeDays);
                     totalFreed += r2.BytesFreed;
                     totalRemoved += r2.FilesRemoved;
                     totalSkipped += r2.FilesSkipped;
@@ -497,17 +807,17 @@ public static class StorageService
                 }
             }
         }
-        else if (!adminStagesOnly)
+        else if (!adminStagesOnly && !cancellationToken.IsCancellationRequested)
         {
             logCallback(isEn
-                ? "[1/6] Temporary folders: Skipped by user configuration."
-                : "[1/6] Временные папки: Пропущено по настройке пользователя.");
+                ? "[1/7] Temporary folders: Skipped by user configuration."
+                : "[1/7] Временные папки: Пропущено по настройке пользователя.");
         }
 
         // Stage 2: Windows Update & Delivery Optimization
         bool cleanSwDist = options.CleanSoftwareDistribution && !disabled.Contains("sw_dist");
         bool cleanDelivOpt = options.CleanSoftwareDistribution && !disabled.Contains("deliv_opt");
-        if (cleanSwDist || cleanDelivOpt)
+        if (!cancellationToken.IsCancellationRequested && (cleanSwDist || cleanDelivOpt))
         {
             string swDist = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "Download");
             string delivOpt = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "DeliveryOptimization");
@@ -515,8 +825,8 @@ public static class StorageService
             if (isAdmin)
             {
                 logCallback(isEn
-                    ? "[2/6] Cleaning Windows Update and Delivery Optimization caches..."
-                    : "[2/6] Очистка кэша обновлений Windows и Delivery Optimization...");
+                    ? "[2/7] Cleaning Windows Update and Delivery Optimization caches..."
+                    : "[2/7] Очистка кэша обновлений Windows и Delivery Optimization...");
 
                 string netExe = Path.Combine(Environment.SystemDirectory, "net.exe");
                 foreach (var svc in new[] { "wuauserv", "dosvc" })
@@ -530,16 +840,16 @@ public static class StorageService
                     catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
                 }
 
-                if (cleanSwDist)
+                if (cleanSwDist && !cancellationToken.IsCancellationRequested)
                 {
-                    var r3 = CleanDirectoryContents(swDist);
+                    var r3 = CleanDirectoryContents(swDist, cancellationToken);
                     totalFreed += r3.BytesFreed;
                     totalRemoved += r3.FilesRemoved;
                     totalSkipped += r3.FilesSkipped;
                 }
-                if (cleanDelivOpt)
+                if (cleanDelivOpt && !cancellationToken.IsCancellationRequested)
                 {
-                    var r4 = CleanDirectoryContents(delivOpt);
+                    var r4 = CleanDirectoryContents(delivOpt, cancellationToken);
                     totalFreed += r4.BytesFreed;
                     totalRemoved += r4.FilesRemoved;
                     totalSkipped += r4.FilesSkipped;
@@ -561,40 +871,40 @@ public static class StorageService
                 adminSkippedStages++;
             }
         }
-        else
+        else if (!adminStagesOnly && !cancellationToken.IsCancellationRequested)
         {
             logCallback(isEn
-                ? "[2/6] Windows Update cache: Skipped by user configuration."
-                : "[2/6] Кэш обновлений Windows: Пропущено по настройке пользователя.");
+                ? "[2/7] Windows Update cache: Skipped by user configuration."
+                : "[2/7] Кэш обновлений Windows: Пропущено по настройке пользователя.");
         }
 
         // Stage 3: Error Reports and Diagnostic Logs (excluding active CBS.log)
         bool cleanCrashDumps = !adminStagesOnly && options.CleanLogsAndReports && !disabled.Contains("crash_dumps");
         bool cleanWer = options.CleanLogsAndReports && !disabled.Contains("wer");
         bool cleanCbs = options.CleanLogsAndReports && !disabled.Contains("cbs_logs");
-        if (cleanCrashDumps || cleanWer || cleanCbs)
+        if (!cancellationToken.IsCancellationRequested && (cleanCrashDumps || cleanWer || cleanCbs))
         {
             logCallback(isEn
-                ? "[3/6] Clearing error reports and system diagnostic logs..."
-                : "[3/6] Очистка отчетов об ошибках и логов...");
+                ? "[3/7] Clearing error reports and system diagnostic logs..."
+                : "[3/7] Очистка отчетов об ошибках и логов...");
 
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             string progData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
 
             if (cleanCrashDumps)
             {
-                var r5 = CleanDirectoryContents(Path.Combine(localAppData, "CrashDumps"));
+                var r5 = CleanDirectoryContents(Path.Combine(localAppData, "CrashDumps"), cancellationToken);
                 totalFreed += r5.BytesFreed;
                 totalRemoved += r5.FilesRemoved;
                 totalSkipped += r5.FilesSkipped;
             }
 
-            if (cleanWer)
+            if (cleanWer && !cancellationToken.IsCancellationRequested)
             {
                 if (!adminStagesOnly)
                 {
-                    var r6 = CleanDirectoryContents(Path.Combine(localAppData, "Microsoft", "Windows", "WER", "ReportArchive"));
-                    var r7 = CleanDirectoryContents(Path.Combine(localAppData, "Microsoft", "Windows", "WER", "ReportQueue"));
+                    var r6 = CleanDirectoryContents(Path.Combine(localAppData, "Microsoft", "Windows", "WER", "ReportArchive"), cancellationToken);
+                    var r7 = CleanDirectoryContents(Path.Combine(localAppData, "Microsoft", "Windows", "WER", "ReportQueue"), cancellationToken);
                     totalFreed += r6.BytesFreed + r7.BytesFreed;
                     totalRemoved += r6.FilesRemoved + r7.FilesRemoved;
                     totalSkipped += r6.FilesSkipped + r7.FilesSkipped;
@@ -602,8 +912,8 @@ public static class StorageService
 
                 if (isAdmin)
                 {
-                    var r8 = CleanDirectoryContents(Path.Combine(progData, "Microsoft", "Windows", "WER", "ReportArchive"));
-                    var r9 = CleanDirectoryContents(Path.Combine(progData, "Microsoft", "Windows", "WER", "ReportQueue"));
+                    var r8 = CleanDirectoryContents(Path.Combine(progData, "Microsoft", "Windows", "WER", "ReportArchive"), cancellationToken);
+                    var r9 = CleanDirectoryContents(Path.Combine(progData, "Microsoft", "Windows", "WER", "ReportQueue"), cancellationToken);
                     totalFreed += r8.BytesFreed + r9.BytesFreed;
                     totalRemoved += r8.FilesRemoved + r9.FilesRemoved;
                     totalSkipped += r8.FilesSkipped + r9.FilesSkipped;
@@ -617,12 +927,12 @@ public static class StorageService
                 }
             }
 
-            if (cleanCbs)
+            if (cleanCbs && !cancellationToken.IsCancellationRequested)
             {
                 string cbsLogs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Logs", "CBS");
                 if (isAdmin)
                 {
-                    var r10 = CleanDirectoryContents(cbsLogs);
+                    var r10 = CleanDirectoryContents(cbsLogs, cancellationToken);
                     totalFreed += r10.BytesFreed;
                     totalRemoved += r10.FilesRemoved;
                     totalSkipped += r10.FilesSkipped;
@@ -636,21 +946,64 @@ public static class StorageService
                 }
             }
         }
-        else if (!adminStagesOnly)
+        else if (!adminStagesOnly && !cancellationToken.IsCancellationRequested)
         {
             logCallback(isEn
-                ? "[3/6] Error reports and CBS logs: Skipped by user configuration."
-                : "[3/6] Отчеты об ошибках и логи CBS: Пропущено по настройке пользователя.");
+                ? "[3/7] Error reports and CBS logs: Skipped by user configuration."
+                : "[3/7] Отчеты об ошибках и логи CBS: Пропущено по настройке пользователя.");
         }
 
-        // Stage 4: DNS Cache Flush
-        if (!adminStagesOnly)
+        // Stage 4: GPU Shader & Browser HTTP Caches
+        if (!adminStagesOnly && !cancellationToken.IsCancellationRequested)
         {
-            if (options.CleanDnsCache)
+            bool cleanGpu = options.CleanGpuShaderCache && !disabled.Contains("gpu_shader");
+            bool cleanBrowser = options.CleanBrowserCache && !disabled.Contains("browser_cache");
+            if (cleanGpu || cleanBrowser)
             {
                 logCallback(isEn
-                    ? "[4/6] Flushing network DNS resolver cache..."
-                    : "[4/6] Сброс сетевого DNS-кэша...");
+                    ? "[4/7] Cleaning GPU shader and browser caches..."
+                    : "[4/7] Очистка кэша шейдеров GPU и браузеров...");
+
+                if (cleanGpu)
+                {
+                    foreach (var dir in GetGpuShaderCacheDirectories())
+                    {
+                        if (cancellationToken.IsCancellationRequested) break;
+                        var r = CleanDirectoryContents(dir, cancellationToken);
+                        totalFreed += r.BytesFreed;
+                        totalRemoved += r.FilesRemoved;
+                        totalSkipped += r.FilesSkipped;
+                    }
+                }
+
+                if (cleanBrowser)
+                {
+                    foreach (var dir in GetBrowserCacheDirectories())
+                    {
+                        if (cancellationToken.IsCancellationRequested) break;
+                        var r = CleanDirectoryContents(dir, cancellationToken);
+                        totalFreed += r.BytesFreed;
+                        totalRemoved += r.FilesRemoved;
+                        totalSkipped += r.FilesSkipped;
+                    }
+                }
+            }
+            else
+            {
+                logCallback(isEn
+                    ? "[4/7] GPU & browser caches: Skipped by user configuration."
+                    : "[4/7] Кэш GPU и браузеров: Пропущено по настройке пользователя.");
+            }
+        }
+
+        // Stage 5: DNS Cache Flush
+        if (!adminStagesOnly && !cancellationToken.IsCancellationRequested)
+        {
+            if (options.CleanDnsCache && !disabled.Contains("dns_cache"))
+            {
+                logCallback(isEn
+                    ? "[5/7] Flushing network DNS resolver cache..."
+                    : "[5/7] Сброс сетевого DNS-кэша...");
 
                 try
                 {
@@ -662,34 +1015,40 @@ public static class StorageService
                         WindowStyle = ProcessWindowStyle.Hidden
                     };
                     using var p = Process.Start(psi);
-                    if (p != null) await p.WaitForExitAsync();
+                    if (p != null) await p.WaitForExitAsync(cancellationToken);
                 }
+                catch (OperationCanceledException) { }
                 catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
             }
             else
             {
                 logCallback(isEn
-                    ? "[4/6] DNS resolver cache: Skipped by user configuration."
-                    : "[4/6] Сетевой DNS-кэш: Пропущено по настройке пользователя.");
+                    ? "[5/7] DNS resolver cache: Skipped by user configuration."
+                    : "[5/7] Сетевой DNS-кэш: Пропущено по настройке пользователя.");
             }
         }
 
-        // Stage 5: Empty Recycle Bin via native Shell32 API
-        if (!adminStagesOnly)
+        // Stage 6: Empty Recycle Bin via native Shell32 API
+        if (!adminStagesOnly && !cancellationToken.IsCancellationRequested)
         {
             if (options.CleanRecycleBin && !disabled.Contains("recycle_bin"))
             {
                 logCallback(isEn
-                    ? "[5/6] Emptying Windows Recycle Bin across all drives..."
-                    : "[5/6] Очистка Корзины на всех накопителях...");
+                    ? "[6/7] Emptying Windows Recycle Bin across all drives..."
+                    : "[6/7] Очистка Корзины на всех накопителях...");
 
                 var (binBytesBefore, binCountBefore) = GetRecycleBinSize();
                 try
                 {
-                    SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
+                    uint hr = SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
+                    if (hr != 0 && hr != 0x8000FFFFu)
+                    {
+                        throw new COMException($"SHEmptyRecycleBin returned 0x{hr:X8}", unchecked((int)hr));
+                    }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Logger.Debug($"SHEmptyRecycleBin fallback triggered: {ex.Message}");
                     try
                     {
                         string psPath = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
@@ -700,9 +1059,10 @@ public static class StorageService
                             WindowStyle = ProcessWindowStyle.Hidden
                         };
                         using var p = Process.Start(psi);
-                        if (p != null) await p.WaitForExitAsync();
+                        if (p != null) await p.WaitForExitAsync(cancellationToken);
                     }
-                    catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
+                    catch (OperationCanceledException) { }
+                    catch (Exception psEx) { Logger.Debug("StorageService.cs: " + psEx.Message); }
                 }
                 var (binBytesAfter, binCountAfter) = GetRecycleBinSize();
                 totalFreed += Math.Max(0, binBytesBefore - binBytesAfter);
@@ -711,21 +1071,22 @@ public static class StorageService
             else
             {
                 logCallback(isEn
-                    ? "[5/6] Recycle Bin: Skipped by user configuration (default: off)."
-                    : "[5/6] Корзина: Пропущено по настройке пользователя (по умолчанию выкл).");
+                    ? "[6/7] Recycle Bin: Skipped by user configuration (default: off)."
+                    : "[6/7] Корзина: Пропущено по настройке пользователя (по умолчанию выкл).");
             }
         }
 
-        // Stage 6: Windows Component Store Cleanup (DISM)
-        if (options.CleanDismComponentCleanup)
+        // Stage 7: Windows Component Store Cleanup (DISM)
+        if (!cancellationToken.IsCancellationRequested && options.CleanDismComponentCleanup && !disabled.Contains("dism_cleanup"))
         {
-            string dismArgs = options.CleanDismResetBase
+            bool useResetBase = options.CleanDismResetBase && !disabled.Contains("dism_resetbase");
+            string dismArgs = useResetBase
                 ? "/Online /Cleanup-Image /StartComponentCleanup /ResetBase"
                 : "/Online /Cleanup-Image /StartComponentCleanup";
 
-            logCallback(isEn 
-                ? $"[6/6] Cleaning Windows Component Store (DISM{(options.CleanDismResetBase ? " with /ResetBase" : "")})..." 
-                : $"[6/6] Очистка хранилища компонентов Windows (DISM{(options.CleanDismResetBase ? " с /ResetBase" : "")})...");
+            logCallback(isEn
+                ? $"[7/7] Cleaning Windows Component Store (DISM{(useResetBase ? " with /ResetBase" : "")})..."
+                : $"[7/7] Очистка хранилища компонентов Windows (DISM{(useResetBase ? " с /ResetBase" : "")})...");
 
             if (isAdmin)
             {
@@ -742,60 +1103,73 @@ public static class StorageService
                     using var p = Process.Start(psi);
                     if (p != null)
                     {
-                        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(180));
+                        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(180));
+                        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
                         try
                         {
-                            await p.WaitForExitAsync(cts.Token);
+                            await p.WaitForExitAsync(linkedCts.Token);
                             if (p.ExitCode != 0)
                             {
                                 hasErrors = true;
-                                logCallback(isEn 
-                                    ? $"[DISM] Failed with ExitCode {p.ExitCode}." 
+                                logCallback(isEn
+                                    ? $"[DISM] Failed with ExitCode {p.ExitCode}."
                                     : $"[DISM] Завершился с ошибкой (код выхода: {p.ExitCode}).");
                             }
                             else
                             {
-                                logCallback(isEn 
-                                    ? "[DISM] Component cleanup completed successfully." 
+                                logCallback(isEn
+                                    ? "[DISM] Component cleanup completed successfully."
                                     : "[DISM] Очистка хранилища компонентов успешно завершена.");
                             }
                         }
                         catch (OperationCanceledException)
                         {
-                            hasErrors = true;
                             try { p.Kill(); } catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
-                            logCallback(isEn 
-                                ? "[DISM] Operation timed out (exceeded 180s)." 
-                                : "[DISM] Операция прервана по тайм-ауту (более 180 сек).");
+                            if (cancellationToken.IsCancellationRequested)
+                            {
+                                logCallback(isEn ? "[DISM] Cancelled by user." : "[DISM] Отменено пользователем.");
+                            }
+                            else
+                            {
+                                hasErrors = true;
+                                logCallback(isEn
+                                    ? "[DISM] Operation timed out (exceeded 180s)."
+                                    : "[DISM] Операция прервана по тайм-ауту (более 180 сек).");
+                            }
                         }
                     }
                 }
                 catch (Exception ex)
                 {
                     hasErrors = true;
-                    logCallback(isEn 
-                        ? $"[DISM] Execution error: {ex.Message}" 
+                    logCallback(isEn
+                        ? $"[DISM] Execution error: {ex.Message}"
                         : $"[DISM] Ошибка запуска DISM: {ex.Message}");
                 }
             }
             else
             {
-                logCallback(isEn 
-                    ? "[DISM] Skipped: administrator privileges required." 
+                logCallback(isEn
+                    ? "[DISM] Skipped: administrator privileges required."
                     : "[DISM] Пропущено: нужны права администратора.");
                 adminSkippedStages++;
             }
         }
-        else
+        else if (!adminStagesOnly && !cancellationToken.IsCancellationRequested)
         {
             logCallback(isEn
-                ? "[6/6] DISM Component Cleanup: Skipped by user configuration."
-                : "[6/6] Очистка компонентов DISM: Пропущено по настройке пользователя.");
+                ? "[7/7] DISM Component Cleanup: Skipped by user configuration."
+                : "[7/7] Очистка компонентов DISM: Пропущено по настройке пользователя.");
         }
 
-        // Format honest summary message
         string summaryMessage;
-        if (adminSkippedStages > 0 || totalSkipped > 0 || hasErrors)
+        if (cancellationToken.IsCancellationRequested)
+        {
+            summaryMessage = isEn
+                ? $"Cleanup cancelled. Freed before stop: {FormatBytes(totalFreed)}, removed {totalRemoved} files."
+                : $"Очистка прервана пользователем. Успело освободиться: {FormatBytes(totalFreed)}, удалено файлов: {totalRemoved}.";
+        }
+        else if (adminSkippedStages > 0 || totalSkipped > 0 || hasErrors)
         {
             summaryMessage = isEn
                 ? $"Cleanup completed with limitations. Freed: {FormatBytes(totalFreed)}, removed {totalRemoved} files, locked/in-use: {totalSkipped}, skipped due to permissions: {adminSkippedStages} step(s)."
@@ -813,58 +1187,214 @@ public static class StorageService
         return new CleanResult(totalFreed, totalRemoved, totalSkipped, adminSkippedStages, hasErrors, summaryMessage);
     }
 
-    public static async Task<int> RunElevatedWorkerAsync(string jobPath)
+    public static async Task<ElevatedWorkerRunResult> ExecuteViaElevatedWorkerAsync(
+        ElevatedCleanupJob job,
+        Action<string> logCallback,
+        CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(jobPath)) return 2;
+        string pipeName = $"CoreSpectre_Elev_{Guid.NewGuid():N}";
+        bool isEn = job.IsEnglish;
 
-        string json = await File.ReadAllTextAsync(jobPath);
-        var job = System.Text.Json.JsonSerializer.Deserialize<ElevatedCleanupJob>(json);
-        if (job == null) return 3;
-
-        var logLock = new object();
-        void AppendProgress(string line)
+        try
         {
-            lock (logLock)
+            using var pipeServer = CreateSecurePipeServer(pipeName);
+
+            string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? "";
+            if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath))
+            {
+                exePath = Path.Combine(AppContext.BaseDirectory, "CoreSpectre.exe");
+            }
+
+            var psi = new ProcessStartInfo(exePath)
+            {
+                Arguments = $"--elevated-worker {pipeName}",
+                WorkingDirectory = Path.GetDirectoryName(exePath) ?? AppContext.BaseDirectory,
+                UseShellExecute = true,
+                Verb = "runas",
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc == null)
+            {
+                string msg = isEn ? "Could not start elevated worker process." : "Не удалось запустить фоновый процесс с правами администратора.";
+                return new ElevatedWorkerRunResult(false, null, msg);
+            }
+
+            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            connectCts.CancelAfter(TimeSpan.FromSeconds(25));
+            Task exitMonitor = proc.WaitForExitAsync(connectCts.Token);
+            var connectTask = pipeServer.WaitForConnectionAsync(connectCts.Token);
+            await Task.WhenAny(connectTask, exitMonitor);
+
+            if (!pipeServer.IsConnected)
+            {
+                try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch (Exception ex) { Logger.Debug($"Worker kill failed: {ex.Message}"); }
+                string errMsg = cancellationToken.IsCancellationRequested
+                    ? (isEn ? "Elevated operation cancelled." : "Операция с правами администратора отменена.")
+                    : (isEn ? "Elevated worker closed before connecting to secure channel." : "Повышенный процесс завершился до подключения к каналу.");
+                return new ElevatedWorkerRunResult(false, null, errMsg);
+            }
+
+            using (var writer = new StreamWriter(pipeServer, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true })
+            {
+                await writer.WriteLineAsync(JsonSerializer.Serialize(job));
+            }
+
+            using var execCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            execCts.CancelAfter(TimeSpan.FromMinutes(4));
+            using var reader = new StreamReader(pipeServer, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+
+            CleanResult? adminResult = null;
+            try
+            {
+                while (await reader.ReadLineAsync(execCts.Token) is { } frame)
+                {
+                    if (frame.StartsWith("LOG:", StringComparison.Ordinal))
+                    {
+                        string logLine = Encoding.UTF8.GetString(Convert.FromBase64String(frame[4..]));
+                        logCallback(logLine);
+                    }
+                    else if (frame.StartsWith("RES:", StringComparison.Ordinal))
+                    {
+                        string resJson = Encoding.UTF8.GetString(Convert.FromBase64String(frame[4..]));
+                        adminResult = JsonSerializer.Deserialize<CleanResult>(resJson);
+                        break;
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch (Exception ex) { Logger.Debug($"Worker kill on cancel failed: {ex.Message}"); }
+                string cancelMsg = cancellationToken.IsCancellationRequested
+                    ? (isEn ? "Elevated operation cancelled by user." : "Операция с правами администратора отменена пользователем.")
+                    : (isEn ? "Elevated worker timed out." : "Превышено время ожидания операции администратора.");
+                return new ElevatedWorkerRunResult(false, null, cancelMsg);
+            }
+            catch (IOException) when (adminResult != null)
+            {
+                // Worker exited cleanly after sending RES frame
+            }
+
+            try
+            {
+                await proc.WaitForExitAsync(execCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch (Exception ex) { Logger.Debug($"Worker kill on exit wait failed: {ex.Message}"); }
+            }
+
+            if (adminResult == null && proc.ExitCode != 0)
+            {
+                string errMsg = isEn
+                    ? $"Elevated worker exited with code {proc.ExitCode}."
+                    : $"Операция с правами администратора завершилась с кодом {proc.ExitCode}.";
+                return new ElevatedWorkerRunResult(false, null, errMsg);
+            }
+
+            return new ElevatedWorkerRunResult(false, adminResult, null);
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return new ElevatedWorkerRunResult(true, null, isEn ? "Administrator elevation cancelled." : "Предоставление прав администратора отменено.");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Elevated worker failed", ex);
+            return new ElevatedWorkerRunResult(false, null, ex.Message);
+        }
+    }
+
+    public static async Task<int> RunElevatedWorkerAsync(string pipeName)
+    {
+        if (!IsValidPipeName(pipeName)) return 2;
+
+        using var pipeClient = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        using var connectCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await pipeClient.ConnectAsync(connectCts.Token);
+
+        using var reader = new StreamReader(pipeClient, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+        using var writer = new StreamWriter(pipeClient, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+
+        string? jobJson = await reader.ReadLineAsync();
+        if (string.IsNullOrWhiteSpace(jobJson)) return 3;
+
+        var job = JsonSerializer.Deserialize<ElevatedCleanupJob>(jobJson);
+        if (job == null) return 4;
+
+        var pipeLock = new object();
+        void SendFrame(string prefix, string payload)
+        {
+            string encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
+            lock (pipeLock)
             {
                 try
                 {
-                    File.AppendAllText(job.ProgressLogPath, line + Environment.NewLine, System.Text.Encoding.UTF8);
+                    writer.WriteLine($"{prefix}:{encoded}");
                 }
                 catch { }
             }
         }
 
-        var opts = new StorageCleanupOptions(
-            job.CleanTemp,
-            job.CleanSoftwareDistribution,
-            job.CleanLogsAndReports,
-            CleanDnsCache: false,
-            CleanRecycleBin: false,
-            job.CleanDismComponentCleanup,
-            job.CleanDismResetBase,
-            new HashSet<string>(job.DisabledTargetKeys ?? new List<string>(), StringComparer.OrdinalIgnoreCase)
-        );
+        CleanResult result;
+        string action = (job.Action ?? "cleanup").Trim().ToLowerInvariant();
+        if (action == "standby")
+        {
+            var (ok, freed, msg) = MemoryService.PurgeStandbyList(job.IsEnglish);
+            SendFrame("LOG", msg);
+            result = new CleanResult(freed, 0, 0, 0, HasErrors: !ok, SummaryMessage: msg);
+        }
+        else if (action is "compact_on" or "compact_off")
+        {
+            bool enable = action == "compact_on";
+            var (ok, msg) = await SetCompactOsAsync(enable, job.IsEnglish);
+            SendFrame("LOG", $"[CompactOS] {msg}");
+            result = new CleanResult(0, 0, 0, 0, HasErrors: !ok, SummaryMessage: msg);
+        }
+        else
+        {
+            var opts = new StorageCleanupOptions(
+                job.CleanTemp,
+                job.CleanSoftwareDistribution,
+                job.CleanLogsAndReports,
+                CleanDnsCache: false,
+                CleanRecycleBin: false,
+                CleanGpuShaderCache: false,
+                CleanBrowserCache: false,
+                job.CleanDismComponentCleanup,
+                job.CleanDismResetBase,
+                new HashSet<string>(job.DisabledTargetKeys ?? new List<string>(), StringComparer.OrdinalIgnoreCase),
+                TempMinAgeDays: job.TempMinAgeDays
+            );
 
-        var result = await ExecuteDeepCleanupAsync(job.IsEnglish, AppendProgress, opts, adminStagesOnly: true);
-        string resJson = System.Text.Json.JsonSerializer.Serialize(result);
-        await File.WriteAllTextAsync(job.ResultJsonPath, resJson, System.Text.Encoding.UTF8);
+            result = await ExecuteDeepCleanupAsync(job.IsEnglish, line => SendFrame("LOG", line), opts, adminStagesOnly: true);
+        }
+
+        string resJson = JsonSerializer.Serialize(result);
+        SendFrame("RES", resJson);
+        try { await writer.FlushAsync(); pipeClient.WaitForPipeDrain(); } catch { }
         return 0;
     }
 
-    public static async Task<bool> CreateRestorePointAsync(string description, bool isEn = false)
-    {
-        var (created, _) = await CreateRestorePointDetailedAsync(description);
-        return created;
-    }
-
-    public static async Task<(bool Created, string? Reason)> CreateRestorePointDetailedAsync(string description)
+    public static async Task<(bool Created, string? Reason)> CreateRestorePointDetailedAsync(string description, CancellationToken cancellationToken = default)
     {
         if (!IsAdministrator()) return (false, "Admin required");
 
         try
         {
+            string safeDesc = new string((description ?? "CoreSpectre Restore Point")
+                .Where(c => !char.IsControl(c))
+                .ToArray())
+                .Replace("'", "''");
+            if (string.IsNullOrWhiteSpace(safeDesc)) safeDesc = "CoreSpectre Before Deep Cleanup";
+
+            string psScript = $"Checkpoint-Computer -Description '{safeDesc}' -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop";
+            string encodedCmd = Convert.ToBase64String(Encoding.Unicode.GetBytes(psScript));
+
             string psPath = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
-            var psi = new ProcessStartInfo(psPath, $"-NoProfile -NonInteractive -Command \"Checkpoint-Computer -Description '{description}' -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop\"")
+            var psi = new ProcessStartInfo(psPath, $"-NoProfile -NonInteractive -EncodedCommand {encodedCmd}")
             {
                 CreateNoWindow = true,
                 UseShellExecute = false,
@@ -874,9 +1404,10 @@ public static class StorageService
             using var p = Process.Start(psi);
             if (p != null)
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                string err = await p.StandardError.ReadToEndAsync(cts.Token);
-                await p.WaitForExitAsync(cts.Token);
+                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+                string err = await p.StandardError.ReadToEndAsync(linked.Token);
+                await p.WaitForExitAsync(linked.Token);
                 if (p.ExitCode == 0 && string.IsNullOrWhiteSpace(err))
                 {
                     return (true, null);
@@ -904,25 +1435,10 @@ public static class StorageService
         return false;
     }
 
-    public static bool LaunchSystemProtectionSettings()
-    {
-        try
-        {
-            string exePath = Path.Combine(Environment.SystemDirectory, "SystemPropertiesProtection.exe");
-            if (File.Exists(exePath))
-            {
-                Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = true });
-                return true;
-            }
-        }
-        catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
-        return false;
-    }
-
     public static List<LargeDirectory> ScanLargeDirectories(string? driveLetter = null, int maxResults = 8)
     {
         var results = new List<LargeDirectory>();
-        string drive = !string.IsNullOrWhiteSpace(driveLetter) ? driveLetter.TrimEnd('\\', ':') : HardwareTelemetry.GetSystemDriveLetter();
+        string drive = ValidateDriveLetter(driveLetter);
         string root = $"{drive}:\\";
 
         try
@@ -930,14 +1446,14 @@ public static class StorageService
             var rootDir = new DirectoryInfo(root);
             foreach (var dir in rootDir.EnumerateDirectories())
             {
-                // Skip system recovery and hidden volume folders
+                if ((dir.Attributes & FileAttributes.ReparsePoint) != 0) continue;
                 if ((dir.Attributes & FileAttributes.System) != 0 && dir.Name.StartsWith("$", StringComparison.Ordinal))
                     continue;
 
                 try
                 {
                     long size = GetTopLevelSize(dir);
-                    if (size > 50L * 1024 * 1024) // > 50 MB
+                    if (size > 50L * 1024 * 1024)
                     {
                         results.Add(new LargeDirectory(dir.FullName, size, FormatBytes(size)));
                     }
@@ -955,9 +1471,6 @@ public static class StorageService
 
         return results.OrderByDescending(x => x.SizeBytes).Take(maxResults).ToList();
     }
-
-    public static List<LargeDirectory> ScanLargeDirectoriesOnC(int maxResults = 8) =>
-        ScanLargeDirectories(null, maxResults);
 
     private static (long totalBytes, int fileCount) GetDirectorySizeSafe(string path, bool cleanableOnly = true)
     {
@@ -1002,20 +1515,26 @@ public static class StorageService
         return (total, count);
     }
 
-    private static long GetTopLevelSize(DirectoryInfo dir, int maxFiles = 3000)
+    private static long GetTopLevelSize(DirectoryInfo dir, int maxFiles = 200_000)
     {
         long total = 0;
         int inspected = 0;
 
         try
         {
-            foreach (var file in dir.EnumerateFiles("*", SearchOption.AllDirectories))
+            var enumOpts = new EnumerationOptions
+            {
+                IgnoreInaccessible = true,
+                RecurseSubdirectories = true,
+                AttributesToSkip = FileAttributes.ReparsePoint
+            };
+            foreach (var file in dir.EnumerateFiles("*", enumOpts))
             {
                 try
                 {
                     total += file.Length;
                     inspected++;
-                    if (inspected >= maxFiles) break; // Keep scan fast
+                    if (inspected >= maxFiles) break;
                 }
                 catch
                 {
@@ -1031,6 +1550,222 @@ public static class StorageService
         return total;
     }
 
+    public static List<LargeDirectory> ScanLargestFiles(string? driveLetter = null, long minBytes = 100L * 1024 * 1024, int maxResults = 15)
+    {
+        var list = new List<LargeDirectory>();
+        string drive = ValidateDriveLetter(driveLetter);
+        string root = $"{drive}:\\";
+
+        try
+        {
+            var enumOpts = new EnumerationOptions
+            {
+                IgnoreInaccessible = true,
+                RecurseSubdirectories = true,
+                AttributesToSkip = FileAttributes.ReparsePoint
+            };
+            foreach (var f in new DirectoryInfo(root).EnumerateFiles("*", enumOpts))
+            {
+                try
+                {
+                    if (f.Length >= minBytes)
+                    {
+                        list.Add(new LargeDirectory(f.FullName, f.Length, FormatBytes(f.Length)));
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+
+        return list.OrderByDescending(x => x.SizeBytes).Take(maxResults).ToList();
+    }
+
+    public static List<LargeDirectory> FindBackupAndArchiveAudits()
+    {
+        var audits = new List<LargeDirectory>();
+        var backupDirs = new[]
+        {
+            @"D:\.minecraft\backup",
+            @"D:\.minecraft\saves_backups",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), ".minecraft", "backup"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), ".minecraft", "saves_backups")
+        };
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dir in backupDirs)
+        {
+            if (!Directory.Exists(dir)) continue;
+            try
+            {
+                var di = new DirectoryInfo(dir);
+                string resolved = (di.Attributes & FileAttributes.ReparsePoint) != 0
+                    ? di.ResolveLinkTarget(true)?.FullName ?? dir
+                    : dir;
+                if (!seen.Add(resolved)) continue;
+                long sz = GetTopLevelSize(new DirectoryInfo(resolved));
+                if (sz > 10L * 1024 * 1024)
+                    audits.Add(new LargeDirectory(resolved, sz, FormatBytes(sz), IsBackupNote: true));
+            }
+            catch { }
+        }
+
+        foreach (var d in DriveInfo.GetDrives().Where(x => x.IsReady && x.DriveType == DriveType.Fixed))
+        {
+            try
+            {
+                foreach (var zip in d.RootDirectory.EnumerateFiles("*.zip"))
+                {
+                    if (zip.Length >= 50L * 1024 * 1024)
+                    {
+                        audits.Add(new LargeDirectory(zip.FullName, zip.Length, FormatBytes(zip.Length), IsBackupNote: true));
+                    }
+                }
+            }
+            catch { }
+        }
+
+        return audits.OrderByDescending(x => x.SizeBytes).ToList();
+    }
+
+    public static List<TargetFilePreview> PreviewTargetFiles(string key, int maxItems = 25)
+    {
+        var dirs = new List<string>();
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+
+        switch (key)
+        {
+            case "user_temp": dirs.Add(Path.GetTempPath()); break;
+            case "win_temp": dirs.Add(Path.Combine(winDir, "Temp")); break;
+            case "sw_dist": dirs.Add(Path.Combine(winDir, "SoftwareDistribution", "Download")); break;
+            case "deliv_opt": dirs.Add(Path.Combine(winDir, "SoftwareDistribution", "DeliveryOptimization")); break;
+            case "crash_dumps": dirs.Add(Path.Combine(localAppData, "CrashDumps")); break;
+            case "wer": dirs.Add(Path.Combine(localAppData, "Microsoft", "Windows", "WER", "ReportArchive")); break;
+            case "cbs_logs": dirs.Add(Path.Combine(winDir, "Logs", "CBS")); break;
+            case "gpu_shader": dirs.AddRange(GetGpuShaderCacheDirectories()); break;
+            case "browser_cache": dirs.AddRange(GetBrowserCacheDirectories()); break;
+        }
+
+        var files = new List<FileInfo>();
+        var enumOpts = new EnumerationOptions
+        {
+            IgnoreInaccessible = true,
+            RecurseSubdirectories = true,
+            AttributesToSkip = FileAttributes.ReparsePoint
+        };
+
+        foreach (var d in dirs)
+        {
+            if (!Directory.Exists(d)) continue;
+            try
+            {
+                foreach (var f in new DirectoryInfo(d).EnumerateFiles("*", enumOpts))
+                {
+                    if (!IsProtectedSelfExtractionPath(f.FullName))
+                    {
+                        files.Add(f);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        return files
+            .OrderByDescending(f => f.Length)
+            .Take(maxItems)
+            .Select(f => new TargetFilePreview(
+                f.Name,
+                f.FullName,
+                FormatBytes(f.Length),
+                f.LastWriteTime.ToString("dd.MM.yyyy HH:mm")))
+            .ToList();
+    }
+
+    public static async Task<bool> IsCompactOsEnabledAsync()
+    {
+        try
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            Encoding oemEnc = Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+
+            string compactExe = Path.Combine(Environment.SystemDirectory, "compact.exe");
+            var psi = new ProcessStartInfo(compactExe, "/CompactOS:query")
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                StandardOutputEncoding = oemEnc,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            using var p = Process.Start(psi);
+            if (p == null) return false;
+            string output = await p.StandardOutput.ReadToEndAsync();
+            await p.WaitForExitAsync();
+
+            if (output.Contains("not in the Compact", StringComparison.OrdinalIgnoreCase) ||
+                output.Contains("не находится в сжатом", StringComparison.OrdinalIgnoreCase) ||
+                output.Contains("не сжатом", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return p.ExitCode == 0 ||
+                   output.Contains("in the Compact state", StringComparison.OrdinalIgnoreCase) ||
+                   output.Contains("находится в сжатом состоянии", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug($"IsCompactOsEnabledAsync failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    public static async Task<(bool Success, string Message)> SetCompactOsAsync(bool enable, bool isEn = false)
+    {
+        if (!IsAdministrator())
+        {
+            return (false, isEn ? "Administrator privileges required for CompactOS." : "Для настройки CompactOS требуются права администратора.");
+        }
+
+        Process? proc = null;
+        try
+        {
+            string compactExe = Path.Combine(Environment.SystemDirectory, "compact.exe");
+            string arg = enable ? "/CompactOS:always" : "/CompactOS:never";
+            var psi = new ProcessStartInfo(compactExe, arg)
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            proc = Process.Start(psi);
+            if (proc == null) return (false, "Failed to start compact.exe");
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+            await proc.WaitForExitAsync(cts.Token);
+            if (proc.ExitCode == 0)
+            {
+                return (true, enable
+                    ? (isEn ? "CompactOS compression enabled (system files compressed)." : "CompactOS включён (системные файлы сжаты для экономии места).")
+                    : (isEn ? "CompactOS compression disabled." : "CompactOS отключён."));
+            }
+            return (false, $"compact.exe ExitCode {proc.ExitCode}");
+        }
+        catch (OperationCanceledException)
+        {
+            try { proc?.Kill(entireProcessTree: true); } catch (Exception ex) { Logger.Debug($"compact.exe kill failed: {ex.Message}"); }
+            return (false, isEn ? "CompactOS operation timed out (exceeded 3 minutes)." : "Операция CompactOS превысила лимит ожидания (3 минуты).");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+        finally
+        {
+            proc?.Dispose();
+        }
+    }
+
     public static string FormatBytes(long bytes)
     {
         string[] units = { "B", "KB", "MB", "GB", "TB" };
@@ -1043,6 +1778,8 @@ public static class StorageService
             unitIndex++;
         }
 
-        return $"{size.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)} {units[unitIndex]}";
+        return unitIndex == 0
+            ? $"{size.ToString("0", System.Globalization.CultureInfo.InvariantCulture)} {units[unitIndex]}"
+            : $"{size.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)} {units[unitIndex]}";
     }
 }

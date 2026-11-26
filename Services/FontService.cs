@@ -35,15 +35,6 @@ public static class FontService
     }
 
     /// <summary>
-    /// Динамически применяет выбранный шрифт ко всему интерфейсу приложения на лету.
-    /// </summary>
-    public static void ApplyFont(string fontName)
-    {
-        var family = GetFontFamily(fontName);
-        Application.Current.Resources["FontMain"] = family;
-    }
-
-    /// <summary>
     /// Создает экземпляр FontFamily, указывающий на проверенный файл на диске.
     /// </summary>
     public static FontFamily GetFontFamily(string fontName)
@@ -152,18 +143,5 @@ public static class FontService
             if (!File.Exists(Path.Combine(dir, fontFile))) return false;
         }
         return true;
-    }
-
-    private static void CopyFonts(string sourceDir, string targetDir)
-    {
-        Directory.CreateDirectory(targetDir);
-        foreach (var file in Directory.GetFiles(sourceDir, "*.ttf"))
-        {
-            string dest = Path.Combine(targetDir, Path.GetFileName(file));
-            if (!File.Exists(dest))
-            {
-                File.Copy(file, dest, true);
-            }
-        }
     }
 }

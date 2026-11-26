@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Net.NetworkInformation;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -18,6 +18,7 @@ public record TabVaultEntry(string Key, string Title, string IconKey);
 public partial class SettingsView : UserControl
 {
     private readonly Dictionary<Expander, bool> _accordionCollapsing = new();
+    private int _animTokenSeq = 0;
     private bool _sysInfoLoaded = false;
     private bool _isInitializing = false;
     private bool _isEditingTabs = false;
@@ -26,8 +27,12 @@ public partial class SettingsView : UserControl
     private bool _use12HourTime = true;
     private bool _autoRamEnabled = true;
     private bool _autoGamePriorityEnabled = true;
+    private bool _minimizeToTray = true;
+    private bool _runAtStartup = false;
+    private bool _enableGlobalHotkeys = true;
+    private bool _enableThresholdAlerts = true;
+    private double _ramThresholdValue = 85.0;
     private List<StartupEntry> _startupEntries = new();
-    private List<NetworkAdapterInfo> _networkAdapters = new();
 
     // Cached hardware specs
     private List<CpuInfo>? _cachedCpu;
@@ -48,6 +53,14 @@ public partial class SettingsView : UserControl
     public event Action<double>? OnRamAlertChanged;
     public event Action<bool>? OnAutoRamChanged;
     public event Action<bool>? OnAutoGamePriorityChanged;
+    public event Action<bool>? OnMinimizeToTrayChanged;
+    public event Action<bool>? OnRunAtStartupChanged;
+    public event Action<bool>? OnGlobalHotkeysChanged;
+    public event Action<bool>? OnThresholdAlertsChanged;
+    public event Action<List<string>, List<string>>? OnProcessListsChanged;
+    public event Action? OnExportBackupRequested;
+    public event Action? OnImportBackupRequested;
+    public event Action? OnExportReportRequested;
     public event Action? OnResetSettingsRequested;
     public event Action<FrameworkElement>? OnIntervalSelectorRequested;
     public event Action<FrameworkElement>? OnThresholdSelectorRequested;
@@ -71,6 +84,12 @@ public partial class SettingsView : UserControl
         bool isEn = _currentLanguage == "EN";
         SettingsHeadingTitle.Text = LocalizationService.Get("Settings.Title");
         SettingsHeadingSub.Text = LocalizationService.Get("Settings.Subtitle");
+        TxtExportBackup.Text = isEn ? "Save .csb" : "Сохранить .csb";
+        TxtImportBackup.Text = isEn ? "Load .csb" : "Загрузить .csb";
+        TxtExportReport.Text = isEn ? "Report" : "Отчёт";
+        BtnExportBackup.ToolTip = isEn ? "Save settings backup to .csb file" : "Сохранить резервную копию настроек в файл .csb";
+        BtnImportBackup.ToolTip = isEn ? "Restore settings from .csb backup file" : "Восстановить настройки из файла .csb";
+        BtnExportReport.ToolTip = isEn ? "Export system hardware & diagnostics report (.txt)" : "Экспортировать диагностический отчёт по ПК (.txt)";
         TxtResetSettings.Text = LocalizationService.Get("Settings.ResetBtn");
 
         // Accordion 1
@@ -100,10 +119,28 @@ public partial class SettingsView : UserControl
         TelemetrySectionTitle.Text = isEn ? "TELEMETRY & SAMPLING" : "ТЕЛЕМЕТРИЯ И ОПРОС";
         IntervalTitle.Text = isEn ? "Metrics sampling interval:" : "Интервал опроса телеметрии:";
         IntervalDesc.Text = isEn ? "Determines update frequency for CPU, RAM and storage metrics" : "Определяет частоту обновления метрик ЦП, ОЗУ и дисков";
-        AutoRamTitle.Text = isEn ? "Auto-purge on memory spike (> 85%)" : "Авто-очистка при пиковой нагрузке (> 85%)";
+        UpdateAutoRamHeading();
         AutoRamDesc.Text = isEn ? "Background working set trim when RAM is near capacity" : "Фоновая очистка рабочих наборов при критическом заполнении памяти";
         AutoGamePriorityTitle.Text = isEn ? "Automatic Game Priority" : "Автоматический игровой приоритет";
-        AutoGamePriorityDesc.Text = isEn ? "Auto-boost javaw, cs2, dota2 upon launch" : "Автоматически повышает приоритет javaw, cs2, dota2 при запуске";
+        AutoGamePriorityDesc.Text = isEn ? "Auto-boost games on launch and restore priority on exit" : "Повышает приоритет игр при запуске и возвращает при выходе";
+
+        TraySectionTitle.Text = isEn ? "TRAY, HOTKEYS & ALERTS" : "ТРЕЙ, ГОРЯЧИЕ КЛАВИШИ И УВЕДОМЛЕНИЯ";
+        RunStartupTitle.Text = isEn ? "Run CoreSpectre at Windows Startup" : "Запускать CoreSpectre вместе с Windows";
+        RunStartupDesc.Text = isEn ? "Launch minimized to system tray when you sign in to Windows" : "Автозапуск свёрнутым в системный трей при входе в Windows";
+        MinimizeTrayTitle.Text = isEn ? "Minimize to System Tray on Close" : "Сворачивать в трей при закрытии окна";
+        MinimizeTrayDesc.Text = isEn ? "Keep background monitoring and hotkeys active when closing the window" : "Оставляет фоновый мониторинг и горячие клавиши при нажатии крестика";
+        HotkeysTitle.Text = isEn ? "Global Hotkeys (Ctrl+Shift+H / L / P)" : "Глобальные клавиши (Ctrl+Shift+H / L / P)";
+        HotkeysDesc.Text = isEn ? "H: toggle HUD · L: Click-Through · P: quick RAM Purge" : "H: скрыть/показать HUD · L: Click-Through · P: очистка ОЗУ";
+        TrayAlertsTitle.Text = isEn ? "Threshold Tray Notifications" : "Оповещения в системный трей";
+        TrayAlertsDesc.Text = isEn ? "Send Windows tray warnings on high CPU/RAM or low disk space" : "Уведомления при превышении порогов ЦП/ОЗУ или нехватке места";
+
+        ListsSectionTitle.Text = isEn ? "PROCESS EXCEPTIONS & CUSTOM GAMES" : "ИСКЛЮЧЕНИЯ ПРОЦЕССОВ И СВОИ ИГРЫ";
+        WhitelistTitle.Text = isEn ? "Memory & Priority Whitelist" : "Белый список процессов";
+        WhitelistDesc.Text = isEn ? "Comma-separated processes skipped by RAM purge and auto-boost (e.g. discord, obs64)" : "Имена процессов через запятую, которые не сжимаются и не бустятся (discord, obs64)";
+        CustomGamesTitle.Text = isEn ? "Custom Game Executables" : "Свои игровые процессы";
+        CustomGamesDesc.Text = isEn ? "Comma-separated extra game .exe names to detect (e.g. valorant, eldenring)" : "Дополнительные .exe игр через запятую (например: valorant, eldenring)";
+        TxtSaveProcessLists.Text = isEn ? "Apply" : "Применить";
+
         StorageSectionTitle.Text = isEn ? "STORAGE & THRESHOLDS" : "ХРАНИЛИЩЕ И ПОРОГИ";
         DiskThresholdTitle.Text = isEn ? "Drive warning threshold:" : "Порог предупреждения диска:";
         DiskThresholdDesc.Text = isEn ? "Warning status triggers when free space drops below threshold" : "Предупреждение срабатывает при остатке места меньше заданного";
@@ -112,18 +149,22 @@ public partial class SettingsView : UserControl
         RamAlertTitle.Text = isEn ? "RAM Alert Threshold (%):" : "Порог нагрузки ОЗУ (%):";
         StartupSectionTitle.Text = isEn ? "STARTUP MANAGER" : "ДИСПЕТЧЕР АВТОЗАГРУЗКИ";
         BtnRefreshStartupText.Text = isEn ? "Refresh" : "Обновить";
-        NetworkSectionTitle.Text = isEn ? "NETWORK ADAPTERS" : "СЕТЕВЫЕ АДАПТЕРЫ";
-        BtnPingAllText.Text = isEn ? "Ping (8.8.8.8)" : "Пинг (8.8.8.8)";
 
         UpdateToggleButtonStyles();
-        RefreshStartupList();
-        RefreshNetworkList();
 
         // Accordion 3
         ExpSysInfo.Header = isEn ? "System Specifications" : "Характеристики системы";
         if (_sysInfoLoaded)
         {
-            PopulateSpecsUI();
+            _sysInfoLoaded = false;
+            if (ExpSysInfo.IsExpanded)
+            {
+                _ = LoadSysInfoAsync();
+            }
+            else if (_cachedOs != null)
+            {
+                PopulateSpecsUI();
+            }
         }
         else
         {
@@ -131,6 +172,14 @@ public partial class SettingsView : UserControl
         }
 
         UpdateStickyHeader();
+    }
+
+    private void UpdateAutoRamHeading()
+    {
+        bool isEn = _currentLanguage == "EN";
+        AutoRamTitle.Text = isEn
+            ? $"Auto-purge on memory spike (> {_ramThresholdValue:0}%)"
+            : $"Авто-очистка при пиковой нагрузке (> {_ramThresholdValue:0}%)";
     }
 
     public void InitSettings(UserSettingsModel settings, bool isLightTheme)
@@ -143,6 +192,11 @@ public partial class SettingsView : UserControl
             _use12HourTime = settings.Use12HourTime;
             _autoRamEnabled = settings.AutoRamPurge;
             _autoGamePriorityEnabled = settings.AutoGamePriority;
+            _minimizeToTray = settings.MinimizeToTray;
+            _runAtStartup = settings.RunAtStartup;
+            _enableGlobalHotkeys = settings.EnableGlobalHotkeys;
+            _enableThresholdAlerts = settings.EnableThresholdAlerts;
+            _ramThresholdValue = settings.RamAlertThreshold;
 
             SliderHudOpacity.Value = settings.HudOpacity;
             TxtHudOpacityVal.Text = $"{settings.HudOpacity:0}%";
@@ -161,9 +215,12 @@ public partial class SettingsView : UserControl
                 ? $"{settings.DiskWarningThresholdGb:0.#} ГБ"
                 : $"{settings.DiskWarningThresholdGb:0.#} GB";
 
+            TxtProcessWhitelist.Text = string.Join(", ", settings.ProcessWhitelist ?? new List<string>());
+            TxtCustomGames.Text = string.Join(", ", settings.CustomGameProcesses ?? new List<string>());
+
+            UpdateAutoRamHeading();
             UpdateToggleButtonStyles();
-            RefreshStartupList();
-            RefreshNetworkList();
+            _ = RefreshStartupListAsync();
         }
         finally
         {
@@ -192,6 +249,18 @@ public partial class SettingsView : UserControl
 
         TxtAutoGamePriorityStatus.Text = _autoGamePriorityEnabled ? (isEn ? "Enabled" : "Включено") : (isEn ? "Disabled" : "Выключено");
         BtnToggleAutoGamePriority.Style = _autoGamePriorityEnabled ? primaryStyle : pillStyle;
+
+        TxtRunAtStartupStatus.Text = _runAtStartup ? (isEn ? "Enabled" : "Включено") : (isEn ? "Disabled" : "Выключено");
+        BtnToggleRunAtStartup.Style = _runAtStartup ? primaryStyle : pillStyle;
+
+        TxtMinimizeToTrayStatus.Text = _minimizeToTray ? (isEn ? "Enabled" : "Включено") : (isEn ? "Disabled" : "Выключено");
+        BtnToggleMinimizeToTray.Style = _minimizeToTray ? primaryStyle : pillStyle;
+
+        TxtGlobalHotkeysStatus.Text = _enableGlobalHotkeys ? (isEn ? "Enabled" : "Включено") : (isEn ? "Disabled" : "Выключено");
+        BtnToggleGlobalHotkeys.Style = _enableGlobalHotkeys ? primaryStyle : pillStyle;
+
+        TxtThresholdAlertsStatus.Text = _enableThresholdAlerts ? (isEn ? "Enabled" : "Включено") : (isEn ? "Disabled" : "Выключено");
+        BtnToggleThresholdAlerts.Style = _enableThresholdAlerts ? primaryStyle : pillStyle;
 
         BtnToggleTabEdit.Style = _isEditingTabs ? primaryStyle : pillStyle;
         TxtToggleTabEdit.Text = _isEditingTabs ? (isEn ? "Done" : "Готово") : (isEn ? "Edit" : "Редактировать");
@@ -243,13 +312,13 @@ public partial class SettingsView : UserControl
         {
             var rowBorder = new Border
             {
-                Background = (Brush)FindResource("BrushBgBase"),
-                BorderBrush = (Brush)FindResource("BrushBorderCard"),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(12, 8, 12, 8),
                 Margin = new Thickness(0, 0, 0, 6)
             };
+            rowBorder.SetResourceReference(Border.BackgroundProperty, "BrushBgBase");
+            rowBorder.SetResourceReference(Border.BorderBrushProperty, "BrushBorderCard");
 
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -265,17 +334,17 @@ public partial class SettingsView : UserControl
                 VerticalAlignment = VerticalAlignment.Center,
                 ToolTip = isEn ? "Add back to navigation (at the end)" : "Добавить в навигацию (в конец списка)"
             };
-            var plusPath = new System.Windows.Shapes.Path
+            var addIcon = new System.Windows.Shapes.Path
             {
                 Data = (Geometry)FindResource("IconPlus"),
                 Width = 10,
                 Height = 10,
-                Fill = (Brush)FindResource("BrushTextPrimary"),
                 Stretch = Stretch.Uniform,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
-            btnAdd.Content = plusPath;
+            addIcon.SetResourceReference(System.Windows.Shapes.Path.FillProperty, "BrushTextPrimary");
+            btnAdd.Content = addIcon;
             btnAdd.Click += (s, ev) => OnRestoreTabRequested?.Invoke(tab.Key);
             Grid.SetColumn(btnAdd, 0);
             grid.Children.Add(btnAdd);
@@ -283,27 +352,27 @@ public partial class SettingsView : UserControl
             var infoSp = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             if (TryFindResource(tab.IconKey) is Geometry geom)
             {
-                var iconPath = new System.Windows.Shapes.Path
+                var tabIcon = new System.Windows.Shapes.Path
                 {
                     Data = geom,
                     Width = 14,
                     Height = 14,
-                    Fill = (Brush)FindResource("BrushTextPrimary"),
                     Stretch = Stretch.Uniform,
                     Margin = new Thickness(0, 0, 8, 0),
                     VerticalAlignment = VerticalAlignment.Center
                 };
-                infoSp.Children.Add(iconPath);
+                tabIcon.SetResourceReference(System.Windows.Shapes.Path.FillProperty, "BrushTextPrimary");
+                infoSp.Children.Add(tabIcon);
             }
-            var nameTb = new TextBlock
+            var titleTb = new TextBlock
             {
                 Text = tab.Title,
                 FontSize = 12.5,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)FindResource("BrushTextPrimary"),
                 VerticalAlignment = VerticalAlignment.Center
             };
-            infoSp.Children.Add(nameTb);
+            titleTb.SetResourceReference(TextBlock.ForegroundProperty, "BrushTextPrimary");
+            infoSp.Children.Add(titleTb);
             Grid.SetColumn(infoSp, 1);
             grid.Children.Add(infoSp);
 
@@ -311,9 +380,9 @@ public partial class SettingsView : UserControl
             {
                 Text = isEn ? "Restore to sidebar" : "Вернуть в меню",
                 FontSize = 11,
-                Foreground = (Brush)FindResource("BrushTextMuted"),
                 VerticalAlignment = VerticalAlignment.Center
             };
+            hintTb.SetResourceReference(TextBlock.ForegroundProperty, "BrushTextMuted");
             Grid.SetColumn(hintTb, 2);
             grid.Children.Add(hintTb);
 
@@ -333,18 +402,6 @@ public partial class SettingsView : UserControl
         }
         if (StickyAccordionBar != null) StickyAccordionBar.Visibility = Visibility.Collapsed;
         SettingsScrollViewer?.ScrollToTop();
-    }
-
-    public void UpdateAutoRamVisual(bool enabled)
-    {
-        _autoRamEnabled = enabled;
-        UpdateToggleButtonStyles();
-    }
-
-    public void UpdateAutoGamePriorityVisual(bool enabled)
-    {
-        _autoGamePriorityEnabled = enabled;
-        UpdateToggleButtonStyles();
     }
 
     private void Expander_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -397,7 +454,7 @@ public partial class SettingsView : UserControl
     private void AnimateExpand(Expander exp, FrameworkElement content)
     {
         _accordionCollapsing[exp] = false;
-        int animToken = Environment.TickCount;
+        int animToken = Interlocked.Increment(ref _animTokenSeq);
         exp.Tag = animToken;
 
         content.BeginAnimation(FrameworkElement.HeightProperty, null);
@@ -447,7 +504,7 @@ public partial class SettingsView : UserControl
         }
 
         _accordionCollapsing[exp] = true;
-        int animToken = Environment.TickCount;
+        int animToken = Interlocked.Increment(ref _animTokenSeq);
         exp.Tag = animToken;
 
         content.BeginAnimation(FrameworkElement.HeightProperty, null);
@@ -602,34 +659,33 @@ public partial class SettingsView : UserControl
         {
             var border = new Border
             {
-                Background = (Brush)FindResource("BrushBgInner"),
-                BorderBrush = (Brush)FindResource("BrushBorderCard"),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(10),
                 Padding = new Thickness(16, 12, 16, 12),
                 Margin = new Thickness(0, 0, 0, 10)
             };
+            border.SetResourceReference(Border.BackgroundProperty, "BrushBgInner");
+            border.SetResourceReference(Border.BorderBrushProperty, "BrushBorderCard");
 
             var sp = new StackPanel();
-            sp.Children.Add(new TextBlock
+            var headerTb = new TextBlock
             {
                 Text = title,
                 FontSize = 10.5,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)FindResource("BrushTextMuted"),
                 Margin = new Thickness(0, 0, 0, 10)
-            });
+            };
+            headerTb.SetResourceReference(TextBlock.ForegroundProperty, "BrushTextMuted");
+            sp.Children.Add(headerTb);
 
             bool first = true;
             foreach (var kv in items)
             {
                 if (!first)
                 {
-                    sp.Children.Add(new Separator
-                    {
-                        Background = (Brush)FindResource("BrushBorderSubtle"),
-                        Margin = new Thickness(0, 6, 0, 6)
-                    });
+                    var sep = new Separator { Margin = new Thickness(0, 6, 0, 6) };
+                    sep.SetResourceReference(Separator.BackgroundProperty, "BrushBorderSubtle");
+                    sp.Children.Add(sep);
                 }
                 first = false;
 
@@ -641,10 +697,10 @@ public partial class SettingsView : UserControl
                 {
                     Text = kv.Key,
                     FontSize = 12,
-                    Foreground = (Brush)FindResource("BrushTextSecondary"),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(0, 0, 18, 0)
                 };
+                lbl.SetResourceReference(TextBlock.ForegroundProperty, "BrushTextSecondary");
                 Grid.SetColumn(lbl, 0);
 
                 var val = new TextBlock
@@ -652,12 +708,12 @@ public partial class SettingsView : UserControl
                     Text = string.IsNullOrEmpty(kv.Value) ? "--" : kv.Value,
                     FontSize = 12,
                     FontWeight = FontWeights.SemiBold,
-                    Foreground = (Brush)FindResource("BrushTextPrimary"),
                     HorizontalAlignment = HorizontalAlignment.Right,
                     TextAlignment = TextAlignment.Right,
                     TextWrapping = TextWrapping.Wrap,
                     VerticalAlignment = VerticalAlignment.Center
                 };
+                val.SetResourceReference(TextBlock.ForegroundProperty, "BrushTextPrimary");
                 Grid.SetColumn(val, 1);
 
                 g.Children.Add(lbl);
@@ -794,14 +850,66 @@ public partial class SettingsView : UserControl
             }
             SysInfoPanel.Children.Add(CreateSection(isRu ? "ФИЗИЧЕСКИЕ И ЛОГИЧЕСКИЕ НАКОПИТЕЛИ" : "PHYSICAL & LOGICAL DRIVES", list));
         }
+
+        // Network Adapters Summary with inline Ping button
+        if (_cachedNet != null && _cachedNet.Count > 0)
+        {
+            var netItems = _cachedNet.Select(n => new KeyValuePair<string, string>(
+                n.Name,
+                $"{n.StatusText} · {n.IpAndMac}"
+            ));
+            var netBorder = CreateSection(isRu ? "СЕТЕВЫЕ ИНТЕРФЕЙСЫ" : "NETWORK INTERFACES", netItems);
+            if (netBorder.Child is StackPanel sp && sp.Children.Count > 0 && sp.Children[0] is TextBlock titleTb)
+            {
+                sp.Children.RemoveAt(0);
+                var headerGrid = new Grid { Margin = new Thickness(0, 0, 0, 10) };
+                titleTb.Margin = new Thickness(0);
+                titleTb.VerticalAlignment = VerticalAlignment.Center;
+
+                var pingLabel = new TextBlock
+                {
+                    Text = isEn ? "Ping (8.8.8.8)" : "Пинг (8.8.8.8)",
+                    FontSize = 11,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                var pingContent = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+                var pingIcon = new System.Windows.Shapes.Path
+                {
+                    Data = (Geometry)FindResource("IconSearch"),
+                    Width = 11,
+                    Height = 11,
+                    Stretch = Stretch.Uniform,
+                    Margin = new Thickness(0, 0, 5, 0),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                pingIcon.SetResourceReference(System.Windows.Shapes.Path.FillProperty, "BrushTextPrimary");
+                pingContent.Children.Add(pingIcon);
+                pingContent.Children.Add(pingLabel);
+
+                var btnPing = new Button
+                {
+                    Style = (Style)FindResource("BtnPill"),
+                    Padding = new Thickness(10, 4, 10, 4),
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Content = pingContent
+                };
+                btnPing.Click += async (_, _) => await RunPingIntoLabelAsync(pingLabel);
+
+                headerGrid.Children.Add(titleTb);
+                headerGrid.Children.Add(btnPing);
+                sp.Children.Insert(0, headerGrid);
+            }
+            SysInfoPanel.Children.Add(netBorder);
+        }
     }
 
-    // Startup Manager
-    public void RefreshStartupList()
+    // Async Startup & Network refresh
+    public async Task RefreshStartupListAsync()
     {
         try
         {
-            _startupEntries = StartupService.GetAllEntries();
+            var items = await Task.Run(() => StartupService.GetAllEntries());
+            _startupEntries = items;
             StartupList.ItemsSource = _startupEntries;
         }
         catch (Exception ex)
@@ -818,7 +926,7 @@ public partial class SettingsView : UserControl
             var res = StartupService.SetEntryEnabled(entry, !entry.IsEnabled, isEn);
             if (res.Success)
             {
-                RefreshStartupList();
+                _ = RefreshStartupListAsync();
             }
             else
             {
@@ -835,7 +943,7 @@ public partial class SettingsView : UserControl
             var res = StartupService.DeleteEntry(entry, isEn);
             if (res.Success)
             {
-                RefreshStartupList();
+                _ = RefreshStartupListAsync();
             }
             else
             {
@@ -844,41 +952,53 @@ public partial class SettingsView : UserControl
         }
     }
 
-    private void BtnRefreshStartup_Click(object sender, RoutedEventArgs e) => RefreshStartupList();
+    private void BtnRefreshStartup_Click(object sender, RoutedEventArgs e) => _ = RefreshStartupListAsync();
 
-    // Network
-    public void RefreshNetworkList()
+    private void StartupList_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
-        try
+        if (sender is not ListBox lb || SettingsScrollViewer == null) return;
+        var sv = FindDescendant<ScrollViewer>(lb);
+        if (sv == null || sv.ScrollableHeight <= 0 ||
+            (e.Delta > 0 && sv.VerticalOffset <= 0) ||
+            (e.Delta < 0 && sv.VerticalOffset >= sv.ScrollableHeight - 0.5))
         {
-            _networkAdapters = SystemInfoService.GetNetworkAdapters(LocalizationService.IsEnglish);
-            NetworkList.ItemsSource = _networkAdapters;
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("Failed to enumerate network adapters", ex);
+            SettingsScrollViewer.ScrollToVerticalOffset(SettingsScrollViewer.VerticalOffset - e.Delta);
+            e.Handled = true;
         }
     }
 
-    private async void BtnPingAll_Click(object sender, RoutedEventArgs e)
+    private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
     {
-        BtnPingAllText.Text = "...";
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match) return match;
+            var res = FindDescendant<T>(child);
+            if (res != null) return res;
+        }
+        return null;
+    }
+
+    private static async Task RunPingIntoLabelAsync(TextBlock targetLabel)
+    {
+        targetLabel.Text = "...";
+        bool isEn = LocalizationService.IsEnglish;
         try
         {
             using var ping = new Ping();
             var reply = await ping.SendPingAsync("8.8.8.8", 2000);
             if (reply.Status == IPStatus.Success)
             {
-                BtnPingAllText.Text = $"{reply.RoundtripTime} ms";
+                targetLabel.Text = isEn ? $"{reply.RoundtripTime} ms" : $"{reply.RoundtripTime} мс";
             }
             else
             {
-                BtnPingAllText.Text = "Fail";
+                targetLabel.Text = isEn ? "Timeout" : "Нет ответа";
             }
         }
         catch
         {
-            BtnPingAllText.Text = "Err";
+            targetLabel.Text = isEn ? "Error" : "Ошибка";
         }
     }
 
@@ -929,7 +1049,9 @@ public partial class SettingsView : UserControl
 
     private void SliderRamAlert_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
+        _ramThresholdValue = e.NewValue;
         if (TxtRamAlertVal != null) TxtRamAlertVal.Text = $"{e.NewValue:0}%";
+        UpdateAutoRamHeading();
         if (!_isInitializing) OnRamAlertChanged?.Invoke(e.NewValue);
     }
 
@@ -957,6 +1079,55 @@ public partial class SettingsView : UserControl
         OnAutoGamePriorityChanged?.Invoke(_autoGamePriorityEnabled);
     }
 
+    private void BtnToggleRunAtStartup_Click(object sender, RoutedEventArgs e)
+    {
+        _runAtStartup = !_runAtStartup;
+        UpdateToggleButtonStyles();
+        OnRunAtStartupChanged?.Invoke(_runAtStartup);
+    }
+
+    private void BtnToggleMinimizeToTray_Click(object sender, RoutedEventArgs e)
+    {
+        _minimizeToTray = !_minimizeToTray;
+        UpdateToggleButtonStyles();
+        OnMinimizeToTrayChanged?.Invoke(_minimizeToTray);
+    }
+
+    private void BtnToggleGlobalHotkeys_Click(object sender, RoutedEventArgs e)
+    {
+        _enableGlobalHotkeys = !_enableGlobalHotkeys;
+        UpdateToggleButtonStyles();
+        OnGlobalHotkeysChanged?.Invoke(_enableGlobalHotkeys);
+    }
+
+    private void BtnToggleThresholdAlerts_Click(object sender, RoutedEventArgs e)
+    {
+        _enableThresholdAlerts = !_enableThresholdAlerts;
+        UpdateToggleButtonStyles();
+        OnThresholdAlertsChanged?.Invoke(_enableThresholdAlerts);
+    }
+
+    private static List<string> ParseProcessCsv(string? text) =>
+        string.IsNullOrWhiteSpace(text)
+            ? new List<string>()
+            : text.Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                  .Select(s => s.Trim().Replace(".exe", "", StringComparison.OrdinalIgnoreCase))
+                  .Where(s => !string.IsNullOrWhiteSpace(s))
+                  .Distinct(StringComparer.OrdinalIgnoreCase)
+                  .ToList();
+
+    private void ApplyProcessLists()
+    {
+        if (_isInitializing) return;
+        OnProcessListsChanged?.Invoke(ParseProcessCsv(TxtProcessWhitelist.Text), ParseProcessCsv(TxtCustomGames.Text));
+    }
+
+    private void TxtLists_LostFocus(object sender, RoutedEventArgs e) => ApplyProcessLists();
+    private void BtnSaveProcessLists_Click(object sender, RoutedEventArgs e) => ApplyProcessLists();
+
+    private void BtnExportBackup_Click(object sender, RoutedEventArgs e) => OnExportBackupRequested?.Invoke();
+    private void BtnImportBackup_Click(object sender, RoutedEventArgs e) => OnImportBackupRequested?.Invoke();
+    private void BtnExportReport_Click(object sender, RoutedEventArgs e) => OnExportReportRequested?.Invoke();
     private void BtnResetSettings_Click(object sender, RoutedEventArgs e) => OnResetSettingsRequested?.Invoke();
     private void BtnToggleTabEdit_Click(object sender, RoutedEventArgs e) => OnToggleTabEditRequested?.Invoke();
     private void BtnOpenTabVault_Click(object sender, RoutedEventArgs e) => OnOpenTabVaultRequested?.Invoke();

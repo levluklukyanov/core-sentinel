@@ -2,23 +2,33 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 using CoreSpectre.Services;
-using CoreSpectre.ViewModels;
 
 namespace CoreSpectre.Views;
+
+public record CleanTargetItem(string Key, string Name, string Path, string FormattedSize, long Bytes, bool IsSelected = true, bool RequiresAdmin = false);
 
 public partial class StorageView : UserControl
 {
     private bool _isStorageOperationRunning = false;
     private bool _isScanningTargets = false;
+    private bool _isCompactOsBusy = false;
+    private int _analyzerViewMode = 0; // 0 = Targets, 1 = Large Folders, 2 = Large Files & Backups
     private int _storageCooldownRemaining = 0;
     private DispatcherTimer? _storageCooldownTimer;
     private readonly DispatcherTimer _autoScanTimer;
+    private CancellationTokenSource? _cleanupCts;
+    private CancellationTokenSource? _analyzerCts;
     private DateTime _lastScanUtc = DateTime.MinValue;
     private string _watchedDriveLetter = "C";
     private string _currentSortMode = "SizeDesc";
@@ -44,17 +54,20 @@ public partial class StorageView : UserControl
         _autoScanTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         _autoScanTimer.Tick += async (s, e) =>
         {
-            if (!_isStorageOperationRunning && !_isScanningTargets)
+            if (IsVisible && !_isStorageOperationRunning && !_isScanningTargets && _analyzerViewMode == 0)
             {
                 await ScanJunkAsync(showLog: false, isManualClick: false, isBackground: true);
             }
         };
         _autoScanTimer.Start();
+        _ = RefreshCompactOsButtonAsync();
     }
 
     public void StopAutoScan()
     {
         _autoScanTimer.Stop();
+        _cleanupCts?.Cancel();
+        _analyzerCts?.Cancel();
     }
 
     public void BindSettings(UserSettingsModel settings, Action saveCallback)
@@ -91,13 +104,31 @@ public partial class StorageView : UserControl
         StorageTabHeading.Text = isEn ? $"Storage & System Cleanup ({_watchedDriveLetter}:)" : $"Хранилище и системная очистка ({_watchedDriveLetter}:)";
         StorageTabSub.Text = LocalizationService.Get("Storage.Subtitle");
         StorageGaugeTitle.Text = isEn ? $"Storage Capacity ({_watchedDriveLetter}:):" : $"Емкость накопителя ({_watchedDriveLetter}:):";
-        CleanTargetsTitle.Text = LocalizationService.Get("Storage.Targets");
+        CleanTargetsTitle.Text = _analyzerViewMode switch
+        {
+            1 => isEn ? $"LARGE FOLDERS ON {_watchedDriveLetter}: (>50 MB)" : $"КРУПНЫЕ ПАПКИ НА {_watchedDriveLetter}: (>50 МБ)",
+            2 => isEn ? $"LARGEST FILES (>100 MB) & BACKUPS" : $"КРУПНЫЕ ФАЙЛЫ (>100 МБ) И БЭКАПЫ",
+            _ => LocalizationService.Get("Storage.Targets")
+        };
         BtnScanJunkText.Text = LocalizationService.Get("Storage.ScanBtn");
         if (_storageCooldownRemaining <= 0 && !_isStorageOperationRunning)
         {
             BtnCleanSystemText.Text = LocalizationService.Get("Storage.CleanBtn");
         }
+        BtnCancelCleanupText.Text = isEn ? "Cancel" : "Отмена";
         BtnRollbackSystemText.Text = LocalizationService.Get("Storage.RollbackBtn");
+        TxtLargeFoldersMode.Text = _analyzerViewMode switch
+        {
+            1 => isEn ? "Files & Backups" : "Файлы и бэкапы",
+            2 => isEn ? "Cleanup Targets" : "Цели очистки",
+            _ => isEn ? "Analyze Disk" : "Анализ диска"
+        };
+        TxtTempAgeFilter.Text = _settings.TempMinAgeDays switch
+        {
+            3 => isEn ? "Temp: >3d" : "Temp: >3д",
+            7 => isEn ? "Temp: >7d" : "Temp: >7д",
+            _ => isEn ? "Temp: All" : "Temp: Все"
+        };
         StorageLogTitle.Text = LocalizationService.Get("Storage.ConsoleTitle");
 
         if (StorageLogFooter.Text == "Ready" || StorageLogFooter.Text == "Готов к работе")
@@ -106,14 +137,15 @@ public partial class StorageView : UserControl
         }
 
         UpdateSortButtonText();
+        _ = RefreshCompactOsButtonAsync();
     }
 
     public void UpdateCapacity(string driveLetter, double freeGb, double totalGb)
     {
-        _watchedDriveLetter = driveLetter;
+        _watchedDriveLetter = StorageService.ValidateDriveLetter(driveLetter, "C");
         bool isEn = LocalizationService.IsEnglish;
 
-        StorageGaugeTitle.Text = isEn ? $"Storage Capacity ({driveLetter}:):" : $"Емкость накопителя ({driveLetter}:):";
+        StorageGaugeTitle.Text = isEn ? $"Storage Capacity ({_watchedDriveLetter}:):" : $"Емкость накопителя ({_watchedDriveLetter}:):";
         StorageHeaderStatus.Text = isEn
             ? $"Free: {freeGb:0.0} GB of {totalGb:0.0} GB"
             : $"Свободно: {freeGb:0.0} ГБ из {totalGb:0.0} ГБ";
@@ -133,6 +165,8 @@ public partial class StorageView : UserControl
             "user_temp" or "win_temp" => _settings.CleanTempFiles,
             "sw_dist" or "deliv_opt" => _settings.CleanSoftwareDistribution,
             "crash_dumps" or "wer" or "cbs_logs" => _settings.CleanLogsAndReports,
+            "gpu_shader" => _settings.CleanGpuShaderCache,
+            "browser_cache" => _settings.CleanBrowserCache,
             "recycle_bin" => _settings.CleanRecycleBin,
             "dns_cache" => _settings.CleanDnsCache,
             "dism_cleanup" => _settings.CleanDismComponentCleanup,
@@ -175,7 +209,6 @@ public partial class StorageView : UserControl
                 t.RequiresAdmin
             )).ToList();
 
-            // Include command-based cleanup actions in the same checkable list
             items.Add(new CleanTargetItem(
                 "dns_cache",
                 isEn ? "Flush DNS Resolver Cache" : "Сброс сетевого кэша DNS",
@@ -247,6 +280,9 @@ public partial class StorageView : UserControl
             return;
         }
 
+        var sv = FindScrollViewer(CleanTargetsList);
+        double verticalOffset = sv?.VerticalOffset ?? 0;
+
         var sorted = _currentSortMode switch
         {
             "SizeAsc" => _cachedTargets.OrderBy(t => t.Bytes < 0 ? 1 : 0).ThenBy(t => t.Bytes).ThenBy(t => t.Name).ToList(),
@@ -255,6 +291,217 @@ public partial class StorageView : UserControl
         };
 
         CleanTargetsList.ItemsSource = sorted;
+
+        if (sv != null && verticalOffset > 0)
+        {
+            Dispatcher.BeginInvoke(() => sv.ScrollToVerticalOffset(verticalOffset), DispatcherPriority.Loaded);
+        }
+    }
+
+    private static ScrollViewer? FindScrollViewer(DependencyObject root)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is ScrollViewer sv) return sv;
+            var res = FindScrollViewer(child);
+            if (res != null) return res;
+        }
+        return null;
+    }
+
+    private async void BtnLargeFoldersMode_Click(object sender, RoutedEventArgs e)
+    {
+        _analyzerCts?.Cancel();
+        _analyzerCts?.Dispose();
+        _analyzerCts = new CancellationTokenSource();
+        var ct = _analyzerCts.Token;
+
+        _analyzerViewMode = (_analyzerViewMode + 1) % 3;
+        int expectedMode = _analyzerViewMode;
+        bool isEn = LocalizationService.IsEnglish;
+
+        if (expectedMode == 1)
+        {
+            CleanTargetsList.Visibility = Visibility.Collapsed;
+            LargeFoldersList.Visibility = Visibility.Visible;
+            BtnSortTargets.Visibility = Visibility.Collapsed;
+            ApplyLanguage(LocalizationService.CurrentLanguage);
+
+            OnStatusChanged?.Invoke(isEn ? $"Scanning heavy folders on {_watchedDriveLetter}:..." : $"Анализ крупных папок на диске {_watchedDriveLetter}:...");
+            var heavy = await Task.Run(() => StorageService.ScanLargeDirectories(_watchedDriveLetter, 12), ct);
+            if (ct.IsCancellationRequested || _analyzerViewMode != expectedMode) return;
+            LargeFoldersList.ItemsSource = heavy;
+            OnStatusChanged?.Invoke(isEn
+                ? $"Found {heavy.Count} directories > 50 MB on {_watchedDriveLetter}:."
+                : $"Найдено каталогов > 50 МБ на диске {_watchedDriveLetter}:: {heavy.Count}.");
+        }
+        else if (expectedMode == 2)
+        {
+            CleanTargetsList.Visibility = Visibility.Collapsed;
+            LargeFoldersList.Visibility = Visibility.Visible;
+            BtnSortTargets.Visibility = Visibility.Collapsed;
+            ApplyLanguage(LocalizationService.CurrentLanguage);
+
+            OnStatusChanged?.Invoke(isEn ? $"Scanning largest files (>100 MB) and backups..." : $"Поиск крупных файлов (>100 МБ) и бэкапов...");
+            var items = await Task.Run(() =>
+            {
+                var combined = new List<LargeDirectory>();
+                combined.AddRange(StorageService.FindBackupAndArchiveAudits());
+                combined.AddRange(StorageService.ScanLargestFiles(_watchedDriveLetter, 100L * 1024 * 1024, 15));
+                return combined.DistinctBy(x => x.Path).OrderByDescending(x => x.SizeBytes).ToList();
+            }, ct);
+            if (ct.IsCancellationRequested || _analyzerViewMode != expectedMode) return;
+            LargeFoldersList.ItemsSource = items;
+            OnStatusChanged?.Invoke(isEn
+                ? $"Found {items.Count} large files / backups."
+                : $"Найдено крупных файлов и бэкапов: {items.Count}.");
+        }
+        else
+        {
+            LargeFoldersList.Visibility = Visibility.Collapsed;
+            CleanTargetsList.Visibility = Visibility.Visible;
+            BtnSortTargets.Visibility = Visibility.Visible;
+            ApplyLanguage(LocalizationService.CurrentLanguage);
+        }
+    }
+
+    private void BtnTempAgeFilter_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.TempMinAgeDays = _settings.TempMinAgeDays switch
+        {
+            0 => 3,
+            3 => 7,
+            _ => 0
+        };
+        PersistSettings();
+        ApplyLanguage(LocalizationService.CurrentLanguage);
+    }
+
+    private async void TargetCardInfo_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.Tag is string key && !string.IsNullOrEmpty(key))
+        {
+            bool isEn = LocalizationService.IsEnglish;
+            var previews = await Task.Run(() => StorageService.PreviewTargetFiles(key, 10));
+            if (previews.Count == 0)
+            {
+                LogStorage(isEn ? $"[Preview] '{key}': no cleanable files found." : $"[Предпросмотр] '{key}': файлы не найдены.");
+                return;
+            }
+            LogStorage(isEn ? $"[Preview] Top files in '{key}':" : $"[Предпросмотр] Крупные файлы в '{key}':");
+            foreach (var p in previews)
+            {
+                LogStorage($"    • {p.Name} ({p.FormattedSize}, {p.LastModified})");
+            }
+        }
+    }
+
+    private async Task RefreshCompactOsButtonAsync()
+    {
+        try
+        {
+            bool enabled = await StorageService.IsCompactOsEnabledAsync();
+            bool isEn = LocalizationService.IsEnglish;
+            BtnCompactOsText.Text = enabled
+                ? (isEn ? "CompactOS: On" : "CompactOS: Вкл")
+                : (isEn ? "CompactOS: Off" : "CompactOS: Выкл");
+        }
+        catch { }
+    }
+
+    private async void BtnCompactOs_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isCompactOsBusy || _isStorageOperationRunning) return;
+        _isCompactOsBusy = true;
+        BtnCompactOs.IsEnabled = false;
+
+        bool isEn = LocalizationService.IsEnglish;
+        bool isAdmin = StorageService.IsAdministrator();
+        try
+        {
+            bool currentlyOn = await StorageService.IsCompactOsEnabledAsync();
+            bool wantEnable = !currentlyOn;
+
+            if (ShowConfirmDialogAsync != null)
+            {
+                string title = isAdmin ? "CompactOS" : (isEn ? "CompactOS (Admin Required)" : "CompactOS (Нужны права администратора)");
+                string msg = wantEnable
+                    ? (isEn ? "Enable Windows CompactOS compression? This safely compresses OS system files to save ~2-4 GB on SSD."
+                            : "Включить сжатие системных файлов CompactOS? Это безопасно освободит ~2–4 ГБ на SSD без потери обновлений.")
+                    : (isEn ? "Disable CompactOS compression and decompress OS system files?"
+                            : "Отключить сжатие CompactOS и распаковать системные файлы?");
+                if (!isAdmin)
+                {
+                    msg += isEn
+                        ? "\n\nCoreSpectre will request Administrator privileges (UAC) via a secure background worker without closing the window."
+                        : "\n\nCoreSpectre запросит права администратора (UAC) для фонового процесса, не закрывая окно приложения.";
+                }
+                string confirmBtn = isAdmin ? (isEn ? "Proceed" : "Выполнить") : (isEn ? "Grant Rights & Run" : "Дать права и выполнить");
+                if (!await ShowConfirmDialogAsync(title, msg, confirmBtn, isEn ? "Cancel" : "Отмена", "IconHardDrive"))
+                    return;
+            }
+
+            BtnCompactOsText.Text = isEn ? "CompactOS: Working..." : "CompactOS: Работа...";
+            LogStorage(isEn ? "[CompactOS] Applying compression state (may take 1-2 min)..." : "[CompactOS] Применение состояния (может занять 1–2 мин)...");
+            OnStatusChanged?.Invoke(isEn ? "Applying CompactOS state..." : "Применение состояния CompactOS...");
+
+            if (isAdmin)
+            {
+                var (_, message) = await StorageService.SetCompactOsAsync(wantEnable, isEn);
+                LogStorage($"[CompactOS] {message}");
+                OnStatusChanged?.Invoke(message);
+            }
+            else
+            {
+                var job = new ElevatedCleanupJob(
+                    IsEnglish: isEn,
+                    CleanTemp: false,
+                    CleanSoftwareDistribution: false,
+                    CleanLogsAndReports: false,
+                    CleanGpuShaderCache: false,
+                    CleanBrowserCache: false,
+                    CleanDismComponentCleanup: false,
+                    CleanDismResetBase: false,
+                    DisabledTargetKeys: new List<string>(),
+                    Action: wantEnable ? "compact_on" : "compact_off"
+                );
+                var run = await StorageService.ExecuteViaElevatedWorkerAsync(job, line => LogStorage(line));
+                string statusMsg = run.Result?.SummaryMessage ?? run.ErrorMessage ?? (isEn ? "CompactOS finished." : "CompactOS завершён.");
+                if (run.ElevationCancelled || !string.IsNullOrEmpty(run.ErrorMessage))
+                {
+                    LogStorage($"[CompactOS] {statusMsg}");
+                }
+                OnStatusChanged?.Invoke(statusMsg);
+            }
+        }
+        finally
+        {
+            await RefreshCompactOsButtonAsync();
+            BtnCompactOs.IsEnabled = true;
+            _isCompactOsBusy = false;
+            OnCleanupCompleted?.Invoke();
+        }
+    }
+
+    private void BtnOpenLargeFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.Tag is string folder)
+        {
+            try
+            {
+                string explorer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+                if (Directory.Exists(folder))
+                {
+                    Process.Start(new ProcessStartInfo(explorer, $"\"{Path.GetFullPath(folder)}\"") { UseShellExecute = true });
+                }
+                else if (File.Exists(folder))
+                {
+                    Process.Start(new ProcessStartInfo(explorer, $"/select,\"{Path.GetFullPath(folder)}\"") { UseShellExecute = true });
+                }
+            }
+            catch (Exception ex) { Logger.Warn($"Open large folder error: {ex.Message}"); }
+        }
     }
 
     private async void TargetCheckBox_Click(object sender, RoutedEventArgs e)
@@ -297,6 +544,16 @@ public partial class StorageView : UserControl
         {
             _settings.CleanRecycleBin = wantChecked;
             _settings.DisabledCleanupTargets.RemoveAll(k => k.Equals("recycle_bin", StringComparison.OrdinalIgnoreCase));
+        }
+        else if (key == "gpu_shader")
+        {
+            _settings.CleanGpuShaderCache = wantChecked;
+            _settings.DisabledCleanupTargets.RemoveAll(k => k.Equals("gpu_shader", StringComparison.OrdinalIgnoreCase));
+        }
+        else if (key == "browser_cache")
+        {
+            _settings.CleanBrowserCache = wantChecked;
+            _settings.DisabledCleanupTargets.RemoveAll(k => k.Equals("browser_cache", StringComparison.OrdinalIgnoreCase));
         }
         else
         {
@@ -399,15 +656,24 @@ public partial class StorageView : UserControl
         }
     }
 
+    private void BtnCancelCleanup_Click(object sender, RoutedEventArgs e)
+    {
+        _cleanupCts?.Cancel();
+        BtnCancelCleanup.IsEnabled = false;
+    }
+
     private async void BtnCleanSystem_Click(object sender, RoutedEventArgs e)
     {
         if (_isStorageOperationRunning || _storageCooldownRemaining > 0) return;
 
         bool isEn = LocalizationService.IsEnglish;
         _isStorageOperationRunning = true;
+        _cleanupCts = new CancellationTokenSource();
 
         BtnCleanSystem.IsEnabled = false;
         BtnScanJunk.IsEnabled = false;
+        BtnCancelCleanup.Visibility = Visibility.Visible;
+        BtnCancelCleanup.IsEnabled = true;
         BtnCleanSystemText.Text = isEn ? "Cleaning..." : "Очистка...";
 
         LogStorage(isEn ? "====== SYSTEM CACHE CLEANUP INITIATED ======" : "====== ЗАПУСК ОЧИСТКИ СИСТЕМНОГО КЭША ======");
@@ -421,27 +687,34 @@ public partial class StorageView : UserControl
                 _settings.CleanLogsAndReports,
                 _settings.CleanDnsCache,
                 _settings.CleanRecycleBin,
+                _settings.CleanGpuShaderCache,
+                _settings.CleanBrowserCache,
                 _settings.CleanDismComponentCleanup,
                 _settings.CleanDismResetBase,
-                new HashSet<string>(_settings.DisabledCleanupTargets ?? new List<string>(), StringComparer.OrdinalIgnoreCase)
+                new HashSet<string>(_settings.DisabledCleanupTargets ?? new List<string>(), StringComparer.OrdinalIgnoreCase),
+                _settings.TempMinAgeDays
             );
 
-            var res = await StorageService.ExecuteDeepCleanupAsync(isEn, stepMsg =>
+            var ct = _cleanupCts.Token;
+            var res = await Task.Run(() => StorageService.ExecuteDeepCleanupAsync(isEn, stepMsg =>
             {
                 LogStorage(stepMsg);
-            }, opts);
+            }, opts, adminStagesOnly: false, cancellationToken: ct));
 
             OnStatusChanged?.Invoke(res.SummaryMessage);
 
             await PerformScanCoreAsync(showLog: false);
             OnCleanupCompleted?.Invoke();
 
-            if (res.AdminSkippedStages > 0 && !StorageService.IsAdministrator() && ShowConfirmDialogAsync != null)
+            if (!_cleanupCts.IsCancellationRequested &&
+                res.AdminSkippedStages > 0 &&
+                !StorageService.IsAdministrator() &&
+                ShowConfirmDialogAsync != null)
             {
                 string title = isEn ? "Administrator Rights Required" : "Требуются права администратора";
                 string msg = isEn
-                    ? $"Cleanup finished, but {res.AdminSkippedStages} system area(s) still contain files that require Administrator privileges (Windows Temp, Windows Update cache, WER/CBS logs, or DISM).\n\nCoreSpectre will run an elevated background worker to clean the remaining system areas without closing the app. Grant rights?"
-                    : $"Очистка завершена, но часть системных областей ({res.AdminSkippedStages} этап(а/ов)) не была очищена — для них требуются права администратора (Windows Temp, кэш обновлений, отчёты WER/CBS или DISM).\n\nCoreSpectre запустит фоновый процесс с правами администратора и доочистит оставшиеся области, не закрывая окно приложения. Дать права?";
+                    ? $"Cleanup finished, but {res.AdminSkippedStages} system area(s) still contain files that require Administrator privileges (Windows Temp, Windows Update cache, WER/CBS logs, or DISM).\n\nCoreSpectre will run a secure elevated background worker to clean the remaining system areas without closing the app. Grant rights?"
+                    : $"Очистка завершена, но часть системных областей ({res.AdminSkippedStages} этап(а/ов)) не была очищена — для них требуются права администратора (Windows Temp, кэш обновлений, отчёты WER/CBS или DISM).\n\nCoreSpectre запустит защищённый фоновый процесс с правами администратора и доочистит оставшиеся области, не закрывая окно приложения. Дать права?";
                 string confirmBtn = isEn ? "Grant Rights" : "Дать права";
                 string cancelBtn = isEn ? "Skip" : "Нет";
 
@@ -464,6 +737,9 @@ public partial class StorageView : UserControl
         }
         finally
         {
+            BtnCancelCleanup.Visibility = Visibility.Collapsed;
+            _cleanupCts?.Dispose();
+            _cleanupCts = null;
             _isStorageOperationRunning = false;
             StartStorageCooldown(5);
         }
@@ -480,8 +756,8 @@ public partial class StorageView : UserControl
             {
                 string title = isEn ? "Windows System Restore" : "Восстановление системы Windows";
                 string msg = isEn
-                    ? "CoreSpectre automatically creates a Windows restore point ('CoreSpectre Before Deep Cleanup') before deep cleanup when launched as Administrator and System Protection is enabled.\n\nClick 'Open Restore' to launch the Windows System Restore wizard (rstrui.exe) and check or revert to an available restore point."
-                    : "CoreSpectre автоматически создаёт точку восстановления Windows («CoreSpectre Before Deep Cleanup») перед очисткой, если запущен от имени администратора и в Windows включена Защита системы.\n\nНажмите «Открыть откат», чтобы запустить мастер восстановления Windows (rstrui.exe) и выбрать точку отката.";
+                    ? "CoreSpectre automatically creates a Windows restore point ('CoreSpectre Before Deep Cleanup') before deep cleanup when elevated and System Protection is enabled.\n\nClick 'Open Restore' to launch the Windows System Restore wizard (rstrui.exe)."
+                    : "CoreSpectre автоматически создаёт точку восстановления Windows («CoreSpectre Before Deep Cleanup») перед очисткой при наличии прав администратора и включённой Защите системы.\n\nНажмите «Открыть откат», чтобы запустить мастер восстановления Windows (rstrui.exe).";
                 string confirmBtn = isEn ? "Open Restore" : "Открыть откат";
                 string cancelBtn = isEn ? "Cancel" : "Отмена";
 
@@ -529,146 +805,40 @@ public partial class StorageView : UserControl
 
     private async Task RunElevatedWorkerCleanupAsync(bool isEn)
     {
-        string logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CoreSpectre", "logs");
-        Directory.CreateDirectory(logDir);
+        LogStorage(isEn
+            ? "[UAC] Starting elevated cleanup worker over ACL Named Pipe (window stays active)..."
+            : "[UAC] Запуск фонового процесса очистки по защищённому каналу (окно остаётся открытым)...");
+        OnStatusChanged?.Invoke(isEn ? "Running elevated system cleanup..." : "Выполняется очистка с правами администратора...");
 
-        string runId = Guid.NewGuid().ToString("N");
-        string jobPath = Path.Combine(logDir, $"elevated_job_{runId}.json");
-        string progressPath = Path.Combine(logDir, $"elevated_progress_{runId}.log");
-        string resultPath = Path.Combine(logDir, $"elevated_result_{runId}.json");
+        var job = new ElevatedCleanupJob(
+            IsEnglish: isEn,
+            CleanTemp: _settings.CleanTempFiles,
+            CleanSoftwareDistribution: _settings.CleanSoftwareDistribution,
+            CleanLogsAndReports: _settings.CleanLogsAndReports,
+            CleanGpuShaderCache: false,
+            CleanBrowserCache: false,
+            CleanDismComponentCleanup: _settings.CleanDismComponentCleanup,
+            CleanDismResetBase: _settings.CleanDismResetBase,
+            DisabledTargetKeys: new List<string>(_settings.DisabledCleanupTargets ?? new List<string>()),
+            Action: "cleanup",
+            TempMinAgeDays: _settings.TempMinAgeDays
+        );
 
-        try
+        var run = await StorageService.ExecuteViaElevatedWorkerAsync(job, line => LogStorage(line), _cleanupCts?.Token ?? CancellationToken.None);
+
+        if (run.Result != null && !string.IsNullOrWhiteSpace(run.Result.SummaryMessage))
         {
-            var job = new ElevatedCleanupJob(
-                IsEnglish: isEn,
-                CleanTemp: _settings.CleanTempFiles,
-                CleanSoftwareDistribution: _settings.CleanSoftwareDistribution,
-                CleanLogsAndReports: _settings.CleanLogsAndReports,
-                CleanDismComponentCleanup: _settings.CleanDismComponentCleanup,
-                CleanDismResetBase: _settings.CleanDismResetBase,
-                DisabledTargetKeys: new List<string>(_settings.DisabledCleanupTargets ?? new List<string>()),
-                ProgressLogPath: progressPath,
-                ResultJsonPath: resultPath
-            );
-
-            await File.WriteAllTextAsync(jobPath, System.Text.Json.JsonSerializer.Serialize(job));
-
-            string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? "";
-            if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath))
-            {
-                exePath = Path.Combine(AppContext.BaseDirectory, "CoreSpectre.exe");
-            }
-
-            var psi = new ProcessStartInfo(exePath)
-            {
-                Arguments = $"--elevated-worker \"{jobPath}\"",
-                WorkingDirectory = Path.GetDirectoryName(exePath) ?? AppContext.BaseDirectory,
-                UseShellExecute = true,
-                Verb = "runas",
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
-
-            LogStorage(isEn
-                ? "[UAC] Starting elevated cleanup worker (main window stays active)..."
-                : "[UAC] Запуск фонового процесса очистки с правами администратора (окно приложения остаётся открытым)...");
-            OnStatusChanged?.Invoke(isEn ? "Running elevated system cleanup..." : "Выполняется очистка с правами администратора...");
-
-            using var proc = Process.Start(psi);
-            if (proc == null)
-            {
-                string msg = isEn ? "Could not start elevated cleanup worker." : "Не удалось запустить процесс очистки с правами администратора.";
-                LogStorage(msg);
-                OnStatusChanged?.Invoke(msg);
-                return;
-            }
-
-            int linesRead = 0;
-            while (!proc.HasExited)
-            {
-                linesRead = ReadNewProgressLines(progressPath, linesRead);
-                await Task.Delay(250);
-            }
-
-            await proc.WaitForExitAsync();
-            linesRead = ReadNewProgressLines(progressPath, linesRead);
-
-            if (File.Exists(resultPath))
-            {
-                string json = await File.ReadAllTextAsync(resultPath);
-                var adminResult = System.Text.Json.JsonSerializer.Deserialize<CleanResult>(json);
-                if (adminResult != null && !string.IsNullOrWhiteSpace(adminResult.SummaryMessage))
-                {
-                    OnStatusChanged?.Invoke(adminResult.SummaryMessage);
-                }
-            }
-            else if (proc.ExitCode != 0)
-            {
-                string errMsg = isEn
-                    ? $"Elevated cleanup exited with code {proc.ExitCode}."
-                    : $"Очистка с правами администратора завершилась с кодом {proc.ExitCode}.";
-                LogStorage(errMsg);
-                OnStatusChanged?.Invoke(errMsg);
-            }
-
-            await PerformScanCoreAsync(showLog: false);
-            OnCleanupCompleted?.Invoke();
+            OnStatusChanged?.Invoke(run.Result.SummaryMessage);
         }
-        catch (System.ComponentModel.Win32Exception)
+        else if (!string.IsNullOrWhiteSpace(run.ErrorMessage))
         {
-            string msg = isEn ? "Administrator elevation cancelled." : "Предоставление прав администратора отменено.";
-            LogStorage(msg);
-            OnStatusChanged?.Invoke(msg);
+            if (!run.ElevationCancelled) LogStorage($"[ERROR] {run.ErrorMessage}");
+            else LogStorage(run.ErrorMessage);
+            OnStatusChanged?.Invoke(run.ErrorMessage);
         }
-        catch (Exception ex)
-        {
-            Logger.Error("Elevated worker failed", ex);
-            LogStorage($"[ERROR] Elevated worker exception: {ex.Message}");
-            OnStatusChanged?.Invoke($"Elevation error: {ex.Message}");
-        }
-        finally
-        {
-            TryDeleteTempFile(jobPath);
-            TryDeleteTempFile(progressPath);
-            TryDeleteTempFile(resultPath);
-        }
-    }
 
-    private int ReadNewProgressLines(string progressPath, int alreadyReadCount)
-    {
-        if (!File.Exists(progressPath)) return alreadyReadCount;
-
-        try
-        {
-            using var fs = new FileStream(progressPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var sr = new StreamReader(fs);
-            int idx = 0;
-            while (sr.ReadLine() is { } line)
-            {
-                if (idx >= alreadyReadCount && !string.IsNullOrWhiteSpace(line))
-                {
-                    LogStorage(line);
-                }
-                idx++;
-            }
-            return idx;
-        }
-        catch
-        {
-            return alreadyReadCount;
-        }
-    }
-
-    private static void TryDeleteTempFile(string path)
-    {
-        try
-        {
-            if (File.Exists(path)) File.Delete(path);
-        }
-        catch
-        {
-            // Ignore cleanup errors for temporary worker IPC files
-        }
+        await PerformScanCoreAsync(showLog: false);
+        OnCleanupCompleted?.Invoke();
     }
 
     private void StartStorageCooldown(int seconds)
@@ -704,15 +874,29 @@ public partial class StorageView : UserControl
     {
         Dispatcher.Invoke(() =>
         {
+            const int MaxLines = 300;
             string time = DateTime.Now.ToString("HH:mm:ss");
             string line = $"[{time}] {msg}";
+
             if (string.IsNullOrWhiteSpace(StorageLogTextBox.Text))
+            {
                 StorageLogTextBox.Text = line;
+            }
             else
-                StorageLogTextBox.AppendText(Environment.NewLine + line);
+            {
+                var lines = StorageLogTextBox.Text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+                if (lines.Length >= MaxLines)
+                {
+                    StorageLogTextBox.Text = string.Join(Environment.NewLine, lines.Skip(lines.Length - MaxLines + 1)) + Environment.NewLine + line;
+                }
+                else
+                {
+                    StorageLogTextBox.AppendText(Environment.NewLine + line);
+                }
+            }
 
             StorageLogScroll.ScrollToEnd();
-            StorageLogFooter.Text = $"Last: {time}";
+            StorageLogFooter.Text = LocalizationService.IsEnglish ? $"Last: {time}" : $"Последнее: {time}";
         });
     }
 

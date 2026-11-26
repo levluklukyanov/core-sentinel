@@ -11,7 +11,7 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- Header with Title and Reset Defaults Button -->
+        <!-- Header with Title, .csb Backup and Reset Defaults Button -->
         <Grid Grid.Row="0" Margin="0,0,0,16">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
@@ -22,19 +22,41 @@
                 <TextBlock x:Name="SettingsHeadingSub" Text="System configuration, customization and hardware specifications" FontSize="13.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,4,0,0"/>
             </StackPanel>
 
-            <!-- Reset Defaults Button -->
-            <Button Grid.Column="1" x:Name="BtnResetSettings" Style="{StaticResource BtnPill}" Click="BtnResetSettings_Click" Padding="14,8" VerticalAlignment="Center">
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Path Data="{StaticResource IconArrowClockwise}" Width="12" Height="12" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="TxtResetSettings" Text="Reset Defaults" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                </StackPanel>
-            </Button>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="BtnExportBackup" Style="{StaticResource BtnPill}" Click="BtnExportBackup_Click" Padding="12,8" Margin="0,0,8,0" ToolTip="Save settings backup (.csb)">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Path Data="{StaticResource IconFloppyDisk}" Width="12" Height="12" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="TxtExportBackup" Text="Save .csb" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+
+                <Button x:Name="BtnImportBackup" Style="{StaticResource BtnPill}" Click="BtnImportBackup_Click" Padding="12,8" Margin="0,0,8,0" ToolTip="Restore settings from backup (.csb)">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Path Data="{StaticResource IconFolder}" Width="12" Height="12" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="TxtImportBackup" Text="Load .csb" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+
+                <Button x:Name="BtnExportReport" Style="{StaticResource BtnPill}" Click="BtnExportReport_Click" Padding="12,8" Margin="0,0,8,0" ToolTip="Export system hardware &amp; diagnostics report (.txt)">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Path Data="{StaticResource IconInfo}" Width="12" Height="12" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="TxtExportReport" Text="Report" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+
+                <Button x:Name="BtnResetSettings" Style="{StaticResource BtnPill}" Click="BtnResetSettings_Click" Padding="14,8">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Path Data="{StaticResource IconArrowClockwise}" Width="12" Height="12" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="TxtResetSettings" Text="Reset Defaults" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
         </Grid>
 
         <!-- Settings Body Area with Floating Sticky Header Overlay -->
         <Grid Grid.Row="1">
             <!-- Accordions -->
-            <ScrollViewer x:Name="SettingsScrollViewer" VerticalScrollBarVisibility="Hidden" ScrollChanged="SettingsScrollViewer_ScrollChanged" SizeChanged="SettingsScrollViewer_SizeChanged">
+            <ScrollViewer x:Name="SettingsScrollViewer" VerticalScrollBarVisibility="Auto" ScrollChanged="SettingsScrollViewer_ScrollChanged" SizeChanged="SettingsScrollViewer_SizeChanged">
                 <StackPanel>
 
                     <!-- ACCORDION 1: Customization -->
@@ -125,13 +147,13 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                    <TextBlock x:Name="TabManagerTitle" Text="Вкладки" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
-                                    <TextBlock x:Name="TabManagerDesc" Text="Управление списком вкладок навигации, удаление и сортировка" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,10,0"/>
+                                    <TextBlock x:Name="TabManagerTitle" Text="Tabs" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
+                                    <TextBlock x:Name="TabManagerDesc" Text="Manage navigation tabs, order and removal" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,10,0"/>
                                 </StackPanel>
                                 <Button Grid.Column="1" x:Name="BtnToggleTabEdit" Style="{StaticResource BtnPill}" Click="BtnToggleTabEdit_Click" Padding="14,6">
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                         <Path x:Name="IconTabEditPath" Data="{StaticResource IconGear}" Width="11" Height="11" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                        <TextBlock x:Name="TxtToggleTabEdit" Text="Редактировать" FontSize="12" FontWeight="SemiBold"/>
+                                        <TextBlock x:Name="TxtToggleTabEdit" Text="Edit" FontSize="12" FontWeight="SemiBold"/>
                                     </StackPanel>
                                 </Button>
                             </Grid>
@@ -145,12 +167,12 @@
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                            <TextBlock x:Name="TabVaultTitle" Text="Хранилище вкладок" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
-                                            <TextBlock x:Name="TabVaultDesc" Text="Вкладки, не добавленные в навигацию. Нажмите Открыть для добавления" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,10,0"/>
+                                            <TextBlock x:Name="TabVaultTitle" Text="Tab Storage" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
+                                            <TextBlock x:Name="TabVaultDesc" Text="Inactive tabs not added to navigation" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,10,0"/>
                                         </StackPanel>
                                         <Button Grid.Column="1" x:Name="BtnOpenTabVault" Style="{StaticResource BtnPill}" Click="BtnOpenTabVault_Click" Padding="14,6" VerticalAlignment="Center">
                                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                <TextBlock x:Name="TxtBtnOpenTabVault" Text="Открыть" FontSize="12" FontWeight="SemiBold" Margin="0,0,6,0"/>
+                                                <TextBlock x:Name="TxtBtnOpenTabVault" Text="Open" FontSize="12" FontWeight="SemiBold" Margin="0,0,6,0"/>
                                                 <Path x:Name="IconVaultChevron" Data="{StaticResource IconChevronDown}" Width="9" Height="9" Fill="{DynamicResource BrushTextSecondary}" Stretch="Uniform" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
                                                     <Path.RenderTransform>
                                                         <RotateTransform Angle="0"/>
@@ -163,7 +185,7 @@
                                     <!-- Expanded Vault Drawer -->
                                     <StackPanel x:Name="VaultDrawerPanel" Visibility="Collapsed" Margin="0,12,0,0">
                                         <Separator Background="{DynamicResource BrushBorderSubtle}" Margin="0,0,0,10"/>
-                                        <TextBlock x:Name="TxtVaultEmpty" Text="Все доступные вкладки активны в навигации." FontSize="11.5" Foreground="{DynamicResource BrushTextMuted}" Margin="4,4,0,4"/>
+                                        <TextBlock x:Name="TxtVaultEmpty" Text="All available tabs are active in navigation." FontSize="11.5" Foreground="{DynamicResource BrushTextMuted}" Margin="4,4,0,4"/>
                                         <StackPanel x:Name="VaultItemsContainer"/>
                                     </StackPanel>
                                 </StackPanel>
@@ -212,19 +234,106 @@
                             </Grid>
 
                             <!-- Auto Game Priority -->
-                            <Grid Margin="0,0,0,16">
+                            <Grid Margin="0,0,0,12">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" VerticalAlignment="Center">
                                     <TextBlock x:Name="AutoGamePriorityTitle" Text="Automatic Game Priority" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
-                                    <TextBlock x:Name="AutoGamePriorityDesc" Text="Auto-boost javaw, cs2, dota2 upon launch" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,10,0"/>
+                                    <TextBlock x:Name="AutoGamePriorityDesc" Text="Auto-boost active games on launch and restore priority on exit" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,10,0"/>
                                 </StackPanel>
-                                <Button Grid.Column="1" x:Name="BtnToggleAutoGamePriority" Style="{StaticResource BtnPrimaryWhite}" Click="BtnToggleAutoGamePriority_Click" Padding="14,6" VerticalAlignment="Center">
+                                <Button Grid.Column="1" x:Name="BtnToggleAutoGamePriority" Style="{StaticResource BtnPrimaryWhite}" Click="BtnToggleAutoGamePriority_Click" Padding="14,6" VerticalAlignment="Center" Margin="0,0,0,16">
                                     <TextBlock x:Name="TxtAutoGamePriorityStatus" Text="Enabled" FontSize="12" FontWeight="SemiBold"/>
                                 </Button>
                             </Grid>
+
+                            <Separator Background="{DynamicResource BrushBorderSubtle}" Margin="0,0,0,16"/>
+
+                            <!-- TRAY & HOTKEYS -->
+                            <TextBlock x:Name="TraySectionTitle" Text="TRAY, HOTKEYS &amp; ALERTS" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextMuted}" Margin="0,0,0,12"/>
+
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <TextBlock x:Name="RunStartupTitle" Text="Run CoreSpectre at Windows Startup" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
+                                    <TextBlock x:Name="RunStartupDesc" Text="Launch minimized to system tray when you sign in to Windows" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,10,0"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" x:Name="BtnToggleRunAtStartup" Style="{StaticResource BtnPill}" Click="BtnToggleRunAtStartup_Click" Padding="14,6" VerticalAlignment="Center">
+                                    <TextBlock x:Name="TxtRunAtStartupStatus" Text="Disabled" FontSize="12" FontWeight="SemiBold"/>
+                                </Button>
+                            </Grid>
+
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <TextBlock x:Name="MinimizeTrayTitle" Text="Minimize to System Tray on Close" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
+                                    <TextBlock x:Name="MinimizeTrayDesc" Text="Keep background telemetry and hotkeys running when closing the window" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,10,0"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" x:Name="BtnToggleMinimizeToTray" Style="{StaticResource BtnPrimaryWhite}" Click="BtnToggleMinimizeToTray_Click" Padding="14,6" VerticalAlignment="Center">
+                                    <TextBlock x:Name="TxtMinimizeToTrayStatus" Text="Enabled" FontSize="12" FontWeight="SemiBold"/>
+                                </Button>
+                            </Grid>
+
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <TextBlock x:Name="HotkeysTitle" Text="Global HUD Hotkeys (Ctrl+Shift+H / L)" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
+                                    <TextBlock x:Name="HotkeysDesc" Text="Toggle HUD visibility (Ctrl+Shift+H) and Click-Through (Ctrl+Shift+L) in games" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,10,0"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" x:Name="BtnToggleGlobalHotkeys" Style="{StaticResource BtnPrimaryWhite}" Click="BtnToggleGlobalHotkeys_Click" Padding="14,6" VerticalAlignment="Center">
+                                    <TextBlock x:Name="TxtGlobalHotkeysStatus" Text="Enabled" FontSize="12" FontWeight="SemiBold"/>
+                                </Button>
+                            </Grid>
+
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <TextBlock x:Name="TrayAlertsTitle" Text="Threshold Tray Notifications" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
+                                    <TextBlock x:Name="TrayAlertsDesc" Text="Send Windows tray balloon warnings on high CPU/RAM or low disk space" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,10,0"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" x:Name="BtnToggleThresholdAlerts" Style="{StaticResource BtnPrimaryWhite}" Click="BtnToggleThresholdAlerts_Click" Padding="14,6" VerticalAlignment="Center">
+                                    <TextBlock x:Name="TxtThresholdAlertsStatus" Text="Enabled" FontSize="12" FontWeight="SemiBold"/>
+                                </Button>
+                            </Grid>
+
+                            <Separator Background="{DynamicResource BrushBorderSubtle}" Margin="0,0,0,16"/>
+
+                            <!-- WHITELIST & CUSTOM GAMES -->
+                            <TextBlock x:Name="ListsSectionTitle" Text="PROCESS EXCEPTIONS &amp; CUSTOM GAMES" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextMuted}" Margin="0,0,0,12"/>
+
+                            <StackPanel Margin="0,0,0,12">
+                                <TextBlock x:Name="WhitelistTitle" Text="Memory &amp; Priority Whitelist" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
+                                <TextBlock x:Name="WhitelistDesc" Text="Comma-separated process names skipped by RAM purge and auto-boost (e.g. discord, obs64)" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,0,6"/>
+                                <TextBox x:Name="TxtProcessWhitelist" Height="32" FontSize="12" Padding="8,0" VerticalContentAlignment="Center" Background="{DynamicResource BrushBgBase}" Foreground="{DynamicResource BrushTextPrimary}" BorderBrush="{DynamicResource BrushBorderCard}" BorderThickness="1" LostFocus="TxtLists_LostFocus"/>
+                            </StackPanel>
+
+                            <StackPanel Margin="0,0,0,16">
+                                <TextBlock x:Name="CustomGamesTitle" Text="Custom Game Executables" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
+                                <TextBlock x:Name="CustomGamesDesc" Text="Comma-separated extra game processes to detect and boost (e.g. valorant, eldenring)" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,0,6"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Grid.Column="0" x:Name="TxtCustomGames" Height="32" FontSize="12" Padding="8,0" VerticalContentAlignment="Center" Background="{DynamicResource BrushBgBase}" Foreground="{DynamicResource BrushTextPrimary}" BorderBrush="{DynamicResource BrushBorderCard}" BorderThickness="1" Margin="0,0,10,0" LostFocus="TxtLists_LostFocus"/>
+                                    <Button Grid.Column="1" x:Name="BtnSaveProcessLists" Style="{StaticResource BtnPill}" Click="BtnSaveProcessLists_Click" Height="32" Padding="14,0" VerticalAlignment="Center">
+                                        <TextBlock x:Name="TxtSaveProcessLists" Text="Apply" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    </Button>
+                                </Grid>
+                            </StackPanel>
 
                             <Separator Background="{DynamicResource BrushBorderSubtle}" Margin="0,0,0,16"/>
 
@@ -277,7 +386,7 @@
                                     </StackPanel>
                                 </Button>
                             </Grid>
-                            <ListBox x:Name="StartupList" MaxHeight="220" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox x:Name="StartupList" MaxHeight="220" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" PreviewMouseWheel="StartupList_PreviewMouseWheel">
                                 <ListBox.ItemContainerStyle>
                                     <Style TargetType="ListBoxItem">
                                         <Setter Property="Padding" Value="0"/>
@@ -321,61 +430,13 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
 
-                            <Separator Background="{DynamicResource BrushBorderSubtle}" Margin="0,16,0,16"/>
-
-                            <!-- NETWORK -->
-                            <Grid Margin="0,0,0,12">
-                                <TextBlock x:Name="NetworkSectionTitle" Text="NETWORK ADAPTERS" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextMuted}" VerticalAlignment="Center"/>
-                                <Button HorizontalAlignment="Right" Style="{StaticResource BtnPill}" Click="BtnPingAll_Click" Padding="10,4">
-                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                        <Path Data="{StaticResource IconSearch}" Width="11" Height="11" Fill="{DynamicResource BrushTextPrimary}" Stretch="Uniform" Margin="0,0,5,0" VerticalAlignment="Center"/>
-                                        <TextBlock x:Name="BtnPingAllText" Text="Ping (8.8.8.8)" FontSize="11" VerticalAlignment="Center"/>
-                                    </StackPanel>
-                                </Button>
-                            </Grid>
-                            <ListBox x:Name="NetworkList" MaxHeight="180" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                <ListBox.ItemContainerStyle>
-                                    <Style TargetType="ListBoxItem">
-                                        <Setter Property="Padding" Value="0"/>
-                                        <Setter Property="Margin" Value="0,0,0,6"/>
-                                        <Setter Property="Background" Value="Transparent"/>
-                                        <Setter Property="Template">
-                                            <Setter.Value>
-                                                <ControlTemplate TargetType="ListBoxItem">
-                                                    <ContentPresenter/>
-                                                </ControlTemplate>
-                                            </Setter.Value>
-                                        </Setter>
-                                    </Style>
-                                </ListBox.ItemContainerStyle>
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Background="{DynamicResource BrushBgInner}" BorderBrush="{DynamicResource BrushBorderCard}" BorderThickness="1" CornerRadius="8" Padding="12,8">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <StackPanel Grid.Column="0">
-                                                    <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" TextTrimming="CharacterEllipsis"/>
-                                                    <TextBlock Text="{Binding IpAndMac}" FontSize="10.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,0,0"/>
-                                                </StackPanel>
-                                                <Border Grid.Column="1" Background="{DynamicResource BrushBgButton}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="4" Padding="6,2" VerticalAlignment="Center" Margin="8,0,0,0">
-                                                    <TextBlock Text="{Binding StatusText}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextSecondary}"/>
-                                                </Border>
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-
                         </StackPanel>
                     </Expander>
 
                     <!-- ACCORDION 3: System Specs -->
-                    <Expander x:Name="ExpSysInfo" Style="{StaticResource AccordionExpander}" Header="Система" Margin="0,0,0,8" Expanded="ExpSysInfo_Expanded" PreviewMouseLeftButtonDown="Expander_PreviewMouseLeftButtonDown">
+                    <Expander x:Name="ExpSysInfo" Style="{StaticResource AccordionExpander}" Header="System Specifications" Margin="0,0,0,8" Expanded="ExpSysInfo_Expanded" PreviewMouseLeftButtonDown="Expander_PreviewMouseLeftButtonDown">
                         <StackPanel x:Name="SysInfoPanel" Margin="0,4,0,0">
-                            <TextBlock x:Name="SysInfoLoadingText" Text="Поиск характеристик системы..." FontSize="12.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,8,0,8"/>
+                            <TextBlock x:Name="SysInfoLoadingText" Text="Scanning system hardware specifications..." FontSize="12.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,8,0,8"/>
                         </StackPanel>
                     </Expander>
 

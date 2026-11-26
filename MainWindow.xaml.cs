@@ -22,6 +22,15 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _telemetryTimer;
     private readonly DispatcherTimer _clockTimer;
     private TelemetryHudWindow? _hudWindow;
+    private TrayAndHotkeyService? _trayService;
+    private bool _forceExit = false;
+    private bool _trayHintShown = false;
+    private bool _isSamplingTelemetry = false;
+    private bool _isRamPurging = false;
+    private bool _mcXmxWarned = false;
+    private DateTime _lastCpuAlertBalloon = DateTime.MinValue;
+    private DateTime _lastRamAlertBalloon = DateTime.MinValue;
+    private DateTime _lastDiskAlertBalloon = DateTime.MinValue;
 
     // Configurable runtime thresholds
     private double _telemetryIntervalSeconds = 1.0;
@@ -61,6 +70,7 @@ public partial class MainWindow : Window
     private int _dragStartIndex = -1;
     private int _targetDropIndex = -1;
     private TaskCompletionSource<bool>? _modalTcs;
+    private readonly System.Threading.SemaphoreSlim _modalSemaphore = new(1, 1);
 
     public MainWindow()
     {
@@ -69,18 +79,21 @@ public partial class MainWindow : Window
         ResizeMode = ResizeMode.NoResize;
         WindowState = WindowState.Maximized;
 
-        SettingsPersistenceService.OnSettingsError += msg =>
-        {
-            Dispatcher.Invoke(() =>
-            {
-                if (StatusFooterText != null) StatusFooterText.Text = msg;
-            });
-        };
+        SettingsPersistenceService.OnSettingsError += HandleSettingsError;
 
         LoadAndApplyUserSettings();
-
-        // Wire View Events
         WireViewEvents();
+
+        SourceInitialized += (_, _) =>
+        {
+            _trayService = new TrayAndHotkeyService(this);
+            _trayService.OnRestoreRequested += RestoreFromTray;
+            _trayService.OnToggleHudRequested += ToggleHudWindow;
+            _trayService.OnToggleHudLockRequested += ToggleHudClickThrough;
+            _trayService.OnQuickPurgeRequested += ExecuteQuickPurge;
+            _trayService.OnExitRequested += ExitApplicationFromTray;
+            _trayService.Initialize(_settings.EnableGlobalHotkeys);
+        };
 
         _telemetryTimer = new DispatcherTimer
         {
@@ -96,13 +109,12 @@ public partial class MainWindow : Window
         _clockTimer.Tick += (s, e) => UpdateFooterClock();
         _clockTimer.Start();
 
-        // Initial setup
         InitNavigationTabs();
         ApplyLanguageStrings();
         SetTheme(_isLightTheme);
         UpdateTelemetry();
         UpdateFooterClock();
-        HighlightTab(0);
+        HighlightTab(_activeTabs.FirstOrDefault()?.TagIndex ?? 0);
         RefreshVaultUI();
 
         ViewPurge.Log(LocalizationService.IsRussian
@@ -110,6 +122,15 @@ public partial class MainWindow : Window
             : "CoreSpectre initialized. Background telemetry and security monitoring active.");
 
         _ = ViewStorage.ScanJunkAsync(showLog: false);
+    }
+
+    private void HandleSettingsError(string msg)
+    {
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (StatusFooterText != null) StatusFooterText.Text = msg;
+        });
     }
 
     private void WireViewEvents()
@@ -136,6 +157,8 @@ public partial class MainWindow : Window
         ViewPurge.OnPurgeRequested += () => ExecuteQuickPurge();
         ViewPurge.OnSwitchPurgeModeRequested += () => ShowPurgeModeDropdown();
         ViewPurge.OnOpenTaskManagerRequested += () => LaunchTaskManager();
+        ViewPurge.OnStandbyPurgeRequested += () => _ = ExecuteStandbyPurgeAsync();
+        ViewPurge.OnRestoreCpuRequested += () => ExecuteRestoreCpu();
 
         // Storage View
         ViewStorage.OnDiskDropdownRequested += fe => ShowDiskDropdown(fe);
@@ -180,12 +203,60 @@ public partial class MainWindow : Window
         ViewSettings.OnAutoGamePriorityChanged += val =>
         {
             _autoGamePriorityEnabled = val;
+            if (!val)
+            {
+                GameBoostService.RestoreAllGamePriorities();
+            }
             SaveCurrentUserSettings();
             StatusFooterText.Text = val
                 ? (LocalizationService.IsEnglish ? "Automatic Game Priority enabled." : "Автоматический Game Priority включен.")
                 : (LocalizationService.IsEnglish ? "Automatic Game Priority disabled." : "Автоматический Game Priority выключен.");
         };
-        ViewSettings.OnResetSettingsRequested += () => ResetSettings();
+        ViewSettings.OnMinimizeToTrayChanged += val =>
+        {
+            _settings.MinimizeToTray = val;
+            SaveCurrentUserSettings();
+        };
+        ViewSettings.OnGlobalHotkeysChanged += val =>
+        {
+            _settings.EnableGlobalHotkeys = val;
+            _trayService?.SetHotkeysEnabled(val);
+            SaveCurrentUserSettings();
+        };
+        ViewSettings.OnThresholdAlertsChanged += val =>
+        {
+            _settings.EnableThresholdAlerts = val;
+            SaveCurrentUserSettings();
+        };
+        ViewSettings.OnProcessListsChanged += (whitelist, customGames) =>
+        {
+            _settings.ProcessWhitelist = whitelist;
+            _settings.CustomGameProcesses = customGames;
+            SaveCurrentUserSettings();
+            StatusFooterText.Text = LocalizationService.IsEnglish
+                ? $"Updated process whitelist ({whitelist.Count}) and custom games ({customGames.Count})."
+                : $"Обновлены исключения ({whitelist.Count}) и свои игры ({customGames.Count}).";
+        };
+        ViewSettings.OnExportBackupRequested += () => ExportBackupToCsb();
+        ViewSettings.OnImportBackupRequested += () => _ = ImportBackupFromCsbAsync();
+        ViewSettings.OnExportReportRequested += () => ExportSystemReport();
+        ViewSettings.OnRunAtStartupChanged += val =>
+        {
+            if (SettingsPersistenceService.SetRunAtStartup(val))
+            {
+                _settings.RunAtStartup = val;
+                SaveCurrentUserSettings();
+            }
+            else
+            {
+                _settings.RunAtStartup = !val;
+                ViewSettings.InitSettings(_settings, _isLightTheme);
+                StatusFooterText.Text = LocalizationService.IsEnglish
+                    ? "Failed to update Windows startup registry entry."
+                    : "Не удалось изменить запись автозапуска в реестре Windows.";
+            }
+        };
+        ViewSettings.OnResetSettingsRequested += () => _ = ResetSettingsAsync();
         ViewSettings.OnIntervalSelectorRequested += fe => ShowIntervalDropdown(fe);
         ViewSettings.OnThresholdSelectorRequested += fe => ShowThresholdDropdown(fe);
         ViewSettings.OnToggleTabEditRequested += () => ToggleTabEditMode();
@@ -211,7 +282,7 @@ public partial class MainWindow : Window
         _autoGamePriorityEnabled = _settings.AutoGamePriority;
         if (!string.IsNullOrWhiteSpace(_settings.WatchedDriveLetter))
         {
-            _watchedDriveLetter = _settings.WatchedDriveLetter;
+            _watchedDriveLetter = SettingsPersistenceService.NormalizeDriveLetter(_settings.WatchedDriveLetter);
         }
         _isCpuPurgeMode = string.Equals(_settings.PurgeMode, "CPU", StringComparison.OrdinalIgnoreCase);
 
@@ -243,14 +314,18 @@ public partial class MainWindow : Window
             {
                 if (SettingsPersistenceService.LastError != null)
                 {
-                    StatusFooterText.Text = $"Settings save error: {SettingsPersistenceService.LastError}";
+                    StatusFooterText.Text = LocalizationService.IsEnglish
+                        ? $"Settings save error: {SettingsPersistenceService.LastError}"
+                        : $"Ошибка сохранения настроек: {SettingsPersistenceService.LastError}";
                 }
             }
         }
         catch (Exception ex)
         {
             Logger.Warn($"Failed to persist runtime settings: {ex.Message}");
-            StatusFooterText.Text = $"Settings save error: {ex.Message}";
+            StatusFooterText.Text = LocalizationService.IsEnglish
+                ? $"Settings save error: {ex.Message}"
+                : $"Ошибка сохранения настроек: {ex.Message}";
         }
     }
 
@@ -269,48 +344,127 @@ public partial class MainWindow : Window
         FooterClockText.Text = $"{localTimeFormatted} ({offsetStr})";
     }
 
-    private void UpdateTelemetry()
+    public void UpdateTelemetry() => _ = UpdateTelemetryAsync();
+
+    private async Task UpdateTelemetryAsync()
     {
+        if (_isSamplingTelemetry) return;
+        _isSamplingTelemetry = true;
+
         try
         {
-            var sample = HardwareTelemetry.Sample();
             bool isEn = LocalizationService.IsEnglish;
+            string watchedLetter = _watchedDriveLetter;
+            var customGames = _settings.CustomGameProcesses?.ToArray() ?? Array.Empty<string>();
+            var whitelist = _settings.ProcessWhitelist?.ToArray() ?? Array.Empty<string>();
+            bool autoBoostGames = _autoGamePriorityEnabled;
 
-            // Quick metrics header
+            var data = await Task.Run(() =>
+            {
+                var procSamples = ProcessTrackerService.SampleProcesses(ProcessSortMode.Cpu);
+                var cpuByPid = new Dictionary<int, double>(procSamples.Count);
+                foreach (var p in procSamples)
+                {
+                    cpuByPid[p.Pid] = p.CpuPercent;
+                }
+
+                var activeGames = GameBoostService.GetActiveGames(!isEn, customGames, whitelist, cpuByPid);
+                var knownGame = activeGames.Count > 0 ? (true, activeGames[0].DisplayName) : (false, string.Empty);
+
+                var sample = HardwareTelemetry.Sample(
+                    includeSensors: true,
+                    customGames: customGames,
+                    excludedGames: whitelist,
+                    knownActiveGame: knownGame);
+
+                var extMem = MemoryService.GetPerformanceDetails();
+                var watchedInfo = StorageService.GetDriveInfo(watchedLetter);
+                string cpuName = HardwareTelemetry.GetProcessorName();
+                int physCores = HardwareTelemetry.GetPhysicalCoreCount();
+
+                if (activeGames.Count > 0)
+                {
+                    if (autoBoostGames && activeGames.Any(g => !g.IsHighPriority))
+                    {
+                        GameBoostService.BoostGames(!isEn, customGames, whitelist);
+                    }
+                }
+                else
+                {
+                    GameBoostService.RestoreAllGamePriorities();
+                }
+
+                return (sample, watchedInfo, activeGames, cpuName, physCores, extMem);
+            });
+
+            var sample = data.sample;
+            var watchedInfo = data.watchedInfo;
+            var activeGames = data.activeGames;
+
+            double watchedTotalGb = watchedInfo != null ? (double)watchedInfo.TotalBytes / (1024 * 1024 * 1024) : sample.DiskCTotalGb;
+            double watchedFreeGb = watchedInfo != null ? (double)watchedInfo.FreeBytes / (1024 * 1024 * 1024) : sample.DiskCFreeGb;
+
+            // Quick metrics header (tracks watched drive consistently)
             QuickCpuText.Text = $"{sample.CpuLoadPercent:0}%";
             QuickRamText.Text = sample.RamTotalBytes > 0 ? $"{sample.RamUsedPercent:0}%" : "N/A";
-            QuickDiskLabel.Text = isEn ? $"Drive {sample.SystemDriveLetter}: " : $"Диск {sample.SystemDriveLetter}: ";
-            QuickDiskText.Text = isEn ? $"{sample.DiskCFreeGb:0.0} GB" : $"{sample.DiskCFreeGb:0.0} ГБ";
+            QuickDiskLabel.Text = isEn ? $"Drive {watchedLetter}: " : $"Диск {watchedLetter}: ";
+            QuickDiskText.Text = isEn ? $"{watchedFreeGb:0.0} GB" : $"{watchedFreeGb:0.0} ГБ";
             QuickDiskMetric.ToolTip = isEn
-                ? $"Open Drive {sample.SystemDriveLetter}: in Windows Explorer"
-                : $"Открыть диск {sample.SystemDriveLetter}: в Проводнике";
+                ? $"Open Drive {watchedLetter}: in Windows Explorer"
+                : $"Открыть диск {watchedLetter}: в Проводнике";
 
             double ramUsedGb = sample.RamUsedBytes / (1024.0 * 1024 * 1024);
             double ramTotalGb = sample.RamTotalBytes / (1024.0 * 1024 * 1024);
 
-            // Watched drive metrics (can be C:, D:, etc.)
-            var watchedInfo = StorageService.GetDriveInfo(_watchedDriveLetter);
-            double watchedTotalGb = watchedInfo != null ? (double)watchedInfo.TotalBytes / (1024 * 1024 * 1024) : sample.DiskCTotalGb;
-            double watchedFreeGb = watchedInfo != null ? (double)watchedInfo.FreeBytes / (1024 * 1024 * 1024) : sample.DiskCFreeGb;
-
-            // Health determination
+            // Health determination & threshold tray alerts
             string healthBadge = isEn ? "Healthy" : "В норме";
             string recommendation = isEn ? "All systems operating nominally" : "Все системы работают стабильно";
-            if (sample.CpuLoadPercent >= _cpuAlertThreshold || sample.RamUsedPercent >= _ramAlertThreshold)
+            bool cpuHigh = sample.CpuLoadPercent >= _cpuAlertThreshold;
+            bool ramHigh = sample.RamTotalBytes > 0 && sample.RamUsedPercent >= _ramAlertThreshold;
+            bool diskLow = watchedTotalGb > 0 && watchedFreeGb < _diskCThresholdGb;
+
+            if (cpuHigh || ramHigh)
             {
                 healthBadge = isEn ? "Warning" : "Внимание";
                 recommendation = isEn ? "High system resource consumption" : "Высокая нагрузка на ресурсы";
             }
-            else if (watchedFreeGb < _diskCThresholdGb)
+            else if (diskLow)
             {
                 healthBadge = isEn ? "Low Space" : "Мало места";
                 recommendation = isEn
-                    ? $"Free space on {_watchedDriveLetter}: below threshold (< {_diskCThresholdGb:0.#} GB)"
-                    : $"На диске {_watchedDriveLetter}: осталось мало места (< {_diskCThresholdGb:0.#} ГБ)";
+                    ? $"Free space on {watchedLetter}: below threshold (< {_diskCThresholdGb:0.#} GB)"
+                    : $"На диске {watchedLetter}: осталось мало места (< {_diskCThresholdGb:0.#} ГБ)";
             }
 
-            // Game info & Header Game Mode Indicator
-            var activeGames = GameSentinelService.GetActiveGames(!isEn);
+            if (_settings.EnableThresholdAlerts && _trayService != null)
+            {
+                var nowUtc = DateTime.UtcNow;
+                if (cpuHigh && (nowUtc - _lastCpuAlertBalloon).TotalSeconds >= 120)
+                {
+                    _lastCpuAlertBalloon = nowUtc;
+                    _trayService.ShowBalloon("CoreSpectre",
+                        isEn ? $"CPU load reached {sample.CpuLoadPercent:0}% (threshold {_cpuAlertThreshold:0}%)"
+                             : $"Нагрузка ЦП достигла {sample.CpuLoadPercent:0}% (порог {_cpuAlertThreshold:0}%)",
+                        isWarning: true);
+                }
+                else if (ramHigh && (nowUtc - _lastRamAlertBalloon).TotalSeconds >= 120)
+                {
+                    _lastRamAlertBalloon = nowUtc;
+                    _trayService.ShowBalloon("CoreSpectre",
+                        isEn ? $"RAM usage reached {sample.RamUsedPercent:0}% (threshold {_ramAlertThreshold:0}%)"
+                             : $"Память заполнена на {sample.RamUsedPercent:0}% (порог {_ramAlertThreshold:0}%)",
+                        isWarning: true);
+                }
+                else if (diskLow && (nowUtc - _lastDiskAlertBalloon).TotalSeconds >= 120)
+                {
+                    _lastDiskAlertBalloon = nowUtc;
+                    _trayService.ShowBalloon("CoreSpectre",
+                        isEn ? $"Low free space on {watchedLetter}: ({watchedFreeGb:0.#} GB remaining)"
+                             : $"Мало места на диске {watchedLetter}: (осталось {watchedFreeGb:0.#} ГБ)",
+                        isWarning: true);
+                }
+            }
+
             string gameBadge = activeGames.Count > 0 ? (isEn ? "Active" : "Активен") : (isEn ? "Waiting" : "В ожидании");
             string gameDetail = activeGames.Count > 0
                 ? $"{activeGames[0].DisplayName} (PID: {activeGames[0].Pid})"
@@ -330,17 +484,16 @@ public partial class MainWindow : Window
                 GameModeDot.Fill = (Brush)FindResource("BrushTextMuted");
                 GameModeText.Text = isEn ? "Waiting for games" : "Ожидание игр";
                 GameModeText.Foreground = (Brush)FindResource("BrushTextSecondary");
-                GameModeIndicatorPanel.ToolTip = isEn ? "Open Game Sentinel" : "Открыть Игровой модуль";
+                GameModeIndicatorPanel.ToolTip = isEn ? "Open Game Mode" : "Открыть Игровой модуль";
             }
 
-            // Update Views
             ViewOverview.UpdateMetrics(
                 sample.CpuLoadPercent,
-                HardwareTelemetry.GetProcessorName(),
+                data.cpuName,
                 sample.RamUsedPercent,
                 ramUsedGb,
                 ramTotalGb,
-                _watchedDriveLetter,
+                watchedLetter,
                 watchedFreeGb,
                 watchedTotalGb,
                 sample.HasSecondaryDataDrive ? sample.DataDriveLetter : null,
@@ -349,47 +502,68 @@ public partial class MainWindow : Window
                 gameBadge,
                 gameDetail,
                 healthBadge,
-                recommendation
+                recommendation,
+                sample.CpuHistory,
+                sample.RamHistory,
+                sample.GpuLoadPercent,
+                sample.GpuTempCelsius
             );
 
             ViewPurge.UpdateMetrics(
                 ramUsedGb,
                 ramTotalGb,
                 sample.CpuLoadPercent,
-                HardwareTelemetry.GetProcessorName(),
-                HardwareTelemetry.GetPhysicalCoreCount(),
-                Environment.ProcessorCount
+                data.cpuName,
+                data.physCores,
+                Environment.ProcessorCount,
+                data.extMem
             );
 
-            ViewStorage.UpdateCapacity(_watchedDriveLetter, watchedFreeGb, watchedTotalGb);
+            ViewStorage.UpdateCapacity(watchedLetter, watchedFreeGb, watchedTotalGb);
             ViewGames.UpdateActiveGames(activeGames);
+            _hudWindow?.ApplySnapshot(sample);
+
+            if (!_mcXmxWarned && sample.RamTotalBytes > 0 &&
+                activeGames.Any(g => g.DisplayName.Contains("Minecraft", StringComparison.OrdinalIgnoreCase) ||
+                                     g.ProcessName.Contains("java", StringComparison.OrdinalIgnoreCase)))
+            {
+                _mcXmxWarned = true;
+                string? warn = GameBoostService.CheckMinecraftXmxWarning(sample.RamTotalBytes, isEn);
+                if (!string.IsNullOrEmpty(warn))
+                {
+                    StatusFooterText.Text = warn;
+                    _trayService?.ShowBalloon("CoreSpectre", warn, isWarning: true);
+                }
+            }
 
             // Auto-RAM purge with 60s cooldown
             if (_autoRamPurgeEnabled && sample.RamTotalBytes > 0 && sample.RamUsedPercent >= _ramAlertThreshold &&
                 (DateTime.Now - _lastAutoPurgeTime).TotalSeconds >= 60)
             {
                 _lastAutoPurgeTime = DateTime.Now;
-                ExecuteRamPurge(isAutomatic: true);
-            }
-
-            // Auto Game Priority Boost
-            if (_autoGamePriorityEnabled && activeGames.Count > 0)
-            {
-                GameSentinelService.BoostGames(!isEn);
+                _ = ExecuteRamPurgeAsync(isAutomatic: true);
             }
         }
         catch (Exception ex)
         {
             Logger.Warn($"Telemetry update warning: {ex.Message}");
         }
+        finally
+        {
+            _isSamplingTelemetry = false;
+        }
     }
 
     private void ApplyLanguageStrings()
     {
+        bool isEn = LocalizationService.IsEnglish;
         NavHeaderTitle.Text = LocalizationService.Get("Nav.Navigation");
         QuickCpuMetric.ToolTip = LocalizationService.Get("Tip.CpuAction");
         QuickRamMetric.ToolTip = LocalizationService.Get("Tip.RamAction");
         BtnToggleHud.ToolTip = LocalizationService.Get("Tip.ToggleHud");
+        BtnMinimize.ToolTip = isEn ? "Minimize" : "Свернуть";
+        BtnMaximize.ToolTip = isEn ? "Maximize" : "Развернуть";
+        BtnClose.ToolTip = isEn ? "Close" : "Закрыть";
 
         foreach (var tab in _activeTabs.Concat(_vaultTabs))
         {
@@ -422,6 +596,7 @@ public partial class MainWindow : Window
         LocalizationService.CurrentLanguage = _currentLanguage;
         SaveCurrentUserSettings();
         ApplyLanguageStrings();
+        _hudWindow?.ApplyLocalizationAndTheme();
         _ = ViewStorage.ScanJunkAsync(showLog: false);
     }
 
@@ -464,7 +639,7 @@ public partial class MainWindow : Window
                     BrandLogoImage.Source = new System.Windows.Media.Imaging.BitmapImage(
                         new Uri(isLight ? "Assets/Icons/logo_dark.png" : "Assets/Icons/logo.png", UriKind.Relative));
                 }
-                catch { }
+                catch (Exception ex) { Logger.Debug($"Logo fallback load skipped: {ex.Message}"); }
             }
         }
 
@@ -520,7 +695,9 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            StatusFooterText.Text = $"Failed to launch taskmgr: {ex.Message}";
+            StatusFooterText.Text = LocalizationService.IsEnglish
+                ? $"Failed to launch taskmgr: {ex.Message}"
+                : $"Не удалось запустить Диспетчер задач: {ex.Message}";
         }
     }
 
@@ -528,21 +705,27 @@ public partial class MainWindow : Window
     {
         try
         {
+            string validLetter = StorageService.ValidateDriveLetter(driveLetter);
             string explorerPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
-            Process.Start(new ProcessStartInfo(explorerPath, $"{driveLetter}:\\") { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(explorerPath, $"{validLetter}:\\") { UseShellExecute = true });
         }
         catch (Exception ex)
         {
-            StatusFooterText.Text = $"Failed to open explorer: {ex.Message}";
+            StatusFooterText.Text = LocalizationService.IsEnglish
+                ? $"Failed to open explorer: {ex.Message}"
+                : $"Не удалось открыть Проводник: {ex.Message}";
         }
     }
 
     private void OpenSecondaryDriveExplorer()
     {
-        var sample = HardwareTelemetry.Sample();
-        if (sample.HasSecondaryDataDrive && !string.IsNullOrEmpty(sample.DataDriveLetter))
+        string sys = HardwareTelemetry.GetSystemDriveLetter();
+        var secondary = DriveInfo.GetDrives()
+            .FirstOrDefault(d => d.IsReady && d.DriveType == DriveType.Fixed &&
+                                 !d.Name.StartsWith(sys, StringComparison.OrdinalIgnoreCase));
+        if (secondary != null)
         {
-            OpenDriveExplorer(sample.DataDriveLetter);
+            OpenDriveExplorer(secondary.Name.TrimEnd('\\', ':'));
         }
     }
 
@@ -552,6 +735,18 @@ public partial class MainWindow : Window
         {
             _hudWindow = new TelemetryHudWindow();
             _hudWindow.Opacity = _settings.HudOpacity / 100.0;
+            _hudWindow.RestoreState(_settings.HudLeft, _settings.HudTop, _settings.HudDriveLetter);
+            _hudWindow.OnPositionChanged += (left, top) =>
+            {
+                _settings.HudLeft = left;
+                _settings.HudTop = top;
+                SaveCurrentUserSettings();
+            };
+            _hudWindow.OnDriveChanged += drive =>
+            {
+                _settings.HudDriveLetter = drive;
+                SaveCurrentUserSettings();
+            };
             _hudWindow.Show();
         }
         else
@@ -559,8 +754,20 @@ public partial class MainWindow : Window
             if (_hudWindow.Visibility == Visibility.Visible)
                 _hudWindow.Hide();
             else
+            {
+                _hudWindow.Opacity = _settings.HudOpacity / 100.0;
                 _hudWindow.Show();
+            }
         }
+    }
+
+    private void ToggleHudClickThrough()
+    {
+        if (_hudWindow == null || !_hudWindow.IsLoaded || _hudWindow.Visibility != Visibility.Visible)
+        {
+            ToggleHudWindow();
+        }
+        _hudWindow?.ToggleClickThrough();
     }
 
     private void ExecuteQuickPurge()
@@ -568,19 +775,21 @@ public partial class MainWindow : Window
         if (ViewPurge.IsCpuPurgeMode)
             _ = ExecuteCpuOptimization();
         else
-            ExecuteRamPurge();
+            _ = ExecuteRamPurgeAsync();
     }
 
-    private void ExecuteRamPurge(bool isAutomatic = false)
+    private async Task ExecuteRamPurgeAsync(bool isAutomatic = false)
     {
-        if (_ramCooldownRemaining > 0) return;
+        if (_ramCooldownRemaining > 0 || _isRamPurging) return;
+        _isRamPurging = true;
 
         bool isEn = LocalizationService.IsEnglish;
         StatusFooterText.Text = isEn ? "Trimming process working sets..." : "Выполняется сброс рабочих наборов процессов...";
 
         try
         {
-            var res = MemoryService.PurgeMemory();
+            var whitelist = _settings.ProcessWhitelist?.ToList() ?? new List<string>();
+            var res = await Task.Run(() => MemoryService.PurgeMemory(whitelist));
             string freedStr = StorageService.FormatBytes(res.BytesFreed);
             string nowTime = DateTime.Now.ToString("HH:mm:ss");
 
@@ -589,7 +798,9 @@ public partial class MainWindow : Window
                 : $"[{nowTime}] Очищено: {freedStr} физической памяти ({res.ProcessesOptimized} процессов оптимизировано). Было: {res.UsedPercentBefore:0}%, стало: {res.UsedPercentAfter:0}%.";
 
             ViewPurge.Log(logMsg);
-            StatusFooterText.Text = isAutomatic ? $"[Auto-Purge] {freedStr} RAM freed." : (isEn ? $"Cleanup completed. Freed {freedStr} RAM." : $"Очистка завершена. Высвобождено {freedStr} RAM.");
+            StatusFooterText.Text = isAutomatic
+                ? (isEn ? $"[Auto-Purge] {freedStr} RAM freed." : $"[Авто-сброс] Освобождено {freedStr} RAM.")
+                : (isEn ? $"Cleanup completed. Freed {freedStr} RAM." : $"Очистка завершена. Высвобождено {freedStr} RAM.");
         }
         catch (Exception ex)
         {
@@ -598,6 +809,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _isRamPurging = false;
             UpdateTelemetry();
             StartRamCooldown(3);
         }
@@ -612,42 +824,18 @@ public partial class MainWindow : Window
 
         try
         {
-            double cpuBefore = HardwareTelemetry.Sample().CpuLoadPercent;
-            int optimizedCount = 0;
-
-            await Task.Run(() =>
-            {
-                var procs = Process.GetProcesses();
-                foreach (var p in procs)
-                {
-                    try
-                    {
-                        if (p.Id == 0 || p.Id == 4) continue;
-                        string pName = p.ProcessName.ToLowerInvariant();
-                        if (pName.Contains("onedrive") || pName.Contains("dropbox") || pName.Contains("googledrivesync") ||
-                            pName.Contains("searchindexer") || pName.Contains("compattelrunner") || pName.Contains("mscorsvw"))
-                        {
-                            if (p.PriorityClass > ProcessPriorityClass.BelowNormal)
-                            {
-                                p.PriorityClass = ProcessPriorityClass.BelowNormal;
-                                optimizedCount++;
-                            }
-                        }
-                    }
-                    catch (Exception ex) { Logger.Debug($"CPU optimization skipped process: {ex.Message}"); }
-                    finally { p.Dispose(); }
-                }
-            });
+            double cpuBefore = HardwareTelemetry.Sample(includeSensors: false).CpuLoadPercent;
+            int optimizedCount = await Task.Run(() => MemoryService.OptimizeBackgroundProcesses(_settings.ProcessWhitelist));
 
             await Task.Delay(500);
-            HardwareTelemetry.Sample();
+            HardwareTelemetry.Sample(includeSensors: false);
             await Task.Delay(800);
-            double cpuAfter = HardwareTelemetry.Sample().CpuLoadPercent;
+            double cpuAfter = HardwareTelemetry.Sample(includeSensors: false).CpuLoadPercent;
 
             string nowTime = DateTime.Now.ToString("HH:mm:ss");
             string status = (cpuAfter < cpuBefore)
                 ? (isEn ? $"CPU optimized: {cpuBefore:0}% -> {cpuAfter:0}% ({optimizedCount} background utilities normalized)" : $"ЦП оптимизирован: {cpuBefore:0}% -> {cpuAfter:0}% ({optimizedCount} фоновых служб нормализовано)")
-                : (isEn ? "CPU load did not change." : "Загрузка ЦП не изменилась.");
+                : (isEn ? $"Background processes throttled: {optimizedCount} (CPU: {cpuAfter:0}%)" : $"Фоновые процессы ограничены: {optimizedCount} (ЦП: {cpuAfter:0}%)");
 
             ViewPurge.Log($"[{nowTime}] {status}");
             StatusFooterText.Text = status;
@@ -658,8 +846,140 @@ public partial class MainWindow : Window
         }
         finally
         {
+            ViewPurge.UpdateVisuals();
             UpdateTelemetry();
             StartRamCooldown(3);
+        }
+    }
+
+    private async Task ExecuteStandbyPurgeAsync()
+    {
+        bool isEn = LocalizationService.IsEnglish;
+        if (StorageService.IsAdministrator())
+        {
+            var res = MemoryService.PurgeStandbyList(isEn);
+            string nowTime = DateTime.Now.ToString("HH:mm:ss");
+            ViewPurge.Log($"[{nowTime}] {res.Message}");
+            StatusFooterText.Text = res.Message;
+            UpdateTelemetry();
+            return;
+        }
+
+        string title = isEn ? "Administrator Rights Required" : "Требуются права администратора";
+        string msg = isEn
+            ? "Clearing the Windows Standby List requires Administrator privileges.\n\nCoreSpectre will run a secure elevated background worker without closing the window. Grant rights?"
+            : "Для очистки резервного списка памяти (Standby List) требуются права администратора.\n\nCoreSpectre выполнит сброс в защищённом фоновом процессе, не закрывая окно приложения. Дать права?";
+        bool confirmed = await ShowModernConfirmDialogAsync(
+            title,
+            msg,
+            isEn ? "Grant Rights" : "Дать права",
+            isEn ? "Cancel" : "Отмена",
+            "IconShield");
+        if (!confirmed) return;
+
+        ViewPurge.SetStandbyPurgeBusy(true);
+        StatusFooterText.Text = isEn ? "Clearing Windows Standby List..." : "Очистка Standby List Windows...";
+        try
+        {
+            var job = new ElevatedCleanupJob(
+                IsEnglish: isEn,
+                CleanTemp: false,
+                CleanSoftwareDistribution: false,
+                CleanLogsAndReports: false,
+                CleanGpuShaderCache: false,
+                CleanBrowserCache: false,
+                CleanDismComponentCleanup: false,
+                CleanDismResetBase: false,
+                DisabledTargetKeys: new List<string>(),
+                Action: "standby"
+            );
+            var run = await StorageService.ExecuteViaElevatedWorkerAsync(job, line =>
+            {
+                string nowTime = DateTime.Now.ToString("HH:mm:ss");
+                ViewPurge.Log($"[{nowTime}] {line}");
+            });
+
+            string statusMsg = run.Result?.SummaryMessage ?? run.ErrorMessage ?? (isEn ? "Standby List cleared." : "Standby List очищен.");
+            if (run.ElevationCancelled || !string.IsNullOrEmpty(run.ErrorMessage))
+            {
+                string nowTime = DateTime.Now.ToString("HH:mm:ss");
+                ViewPurge.Log($"[{nowTime}] {statusMsg}");
+            }
+            StatusFooterText.Text = statusMsg;
+            UpdateTelemetry();
+        }
+        finally
+        {
+            ViewPurge.SetStandbyPurgeBusy(false);
+        }
+    }
+
+    private void ExecuteRestoreCpu()
+    {
+        bool isEn = LocalizationService.IsEnglish;
+        int restored = MemoryService.RestoreBackgroundProcesses();
+        ViewPurge.UpdateVisuals();
+        string nowTime = DateTime.Now.ToString("HH:mm:ss");
+        string msg = isEn
+            ? $"Restored normal priority and EcoQoS for {restored} processes."
+            : $"Восстановлен обычный приоритет и EcoQoS для {restored} процессов.";
+        ViewPurge.Log($"[{nowTime}] {msg}");
+        StatusFooterText.Text = msg;
+        UpdateTelemetry();
+    }
+
+    private void ExportSystemReport()
+    {
+        bool isEn = LocalizationService.IsEnglish;
+        try
+        {
+            string downloadsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+            if (!Directory.Exists(downloadsDir)) downloadsDir = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = isEn ? "Export Diagnostic Report" : "Экспорт диагностического отчёта",
+                Filter = "Text Report (*.txt)|*.txt",
+                DefaultExt = ".txt",
+                InitialDirectory = downloadsDir,
+                FileName = $"CoreSpectre_Report_{DateTime.Now:yyyyMMdd_HHmm}.txt"
+            };
+            if (dlg.ShowDialog(this) != true) return;
+
+            var sample = HardwareTelemetry.Sample(includeSensors: true);
+            var extMem = MemoryService.GetPerformanceDetails();
+            string cpuName = HardwareTelemetry.GetProcessorName();
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("=== CoreSpectre System Diagnostic Report ===");
+            sb.AppendLine($"Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine($"CPU: {cpuName} ({HardwareTelemetry.GetPhysicalCoreCount()}C / {Environment.ProcessorCount}T) @ {sample.CpuLoadPercent:0}%");
+            sb.AppendLine($"RAM: {sample.RamUsedBytes / (1024.0 * 1024 * 1024):0.00} / {sample.RamTotalBytes / (1024.0 * 1024 * 1024):0.00} GB ({sample.RamUsedPercent:0}%)");
+            if (extMem != null)
+            {
+                sb.AppendLine($"Commit Charge: {extMem.CommitTotalBytes / (1024.0 * 1024 * 1024):0.00} / {extMem.CommitLimitBytes / (1024.0 * 1024 * 1024):0.00} GB");
+                sb.AppendLine($"System Cache: {extMem.SystemCacheBytes / (1024.0 * 1024):0} MB");
+            }
+            if (sample.GpuLoadPercent.HasValue || sample.GpuTempCelsius.HasValue)
+            {
+                sb.AppendLine($"GPU: Load={sample.GpuLoadPercent?.ToString("0") ?? "N/A"}%, Temp={sample.GpuTempCelsius?.ToString("0") ?? "N/A"}°C");
+            }
+            foreach (var d in DriveInfo.GetDrives().Where(x => x.IsReady && x.DriveType == DriveType.Fixed))
+            {
+                sb.AppendLine($"Drive {d.Name}: {d.AvailableFreeSpace / (1024.0 * 1024 * 1024):0.0} GB free / {d.TotalSize / (1024.0 * 1024 * 1024):0.0} GB total");
+            }
+            sb.AppendLine();
+            sb.AppendLine("Top Processes (by RAM):");
+            foreach (var p in ProcessTrackerService.SampleProcesses(ProcessSortMode.Ram).Take(12))
+            {
+                sb.AppendLine($"  {p.DisplayName} (PID {p.Pid}): {p.FormattedRam}, CPU {p.FormattedCpu}");
+            }
+            File.WriteAllText(dlg.FileName, sb.ToString(), System.Text.Encoding.UTF8);
+            StatusFooterText.Text = isEn ? $"Report exported: {Path.GetFileName(dlg.FileName)}" : $"Отчёт сохранён: {Path.GetFileName(dlg.FileName)}";
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"ExportSystemReport failed: {ex.Message}");
+            StatusFooterText.Text = isEn ? "Failed to export report." : "Не удалось сохранить отчёт.";
         }
     }
 
@@ -682,7 +1002,7 @@ public partial class MainWindow : Window
     private void ExecuteGameBoost()
     {
         bool isEn = LocalizationService.IsEnglish;
-        var res = GameSentinelService.BoostGames(!isEn);
+        var res = GameBoostService.BoostGames(!isEn, _settings.CustomGameProcesses, _settings.ProcessWhitelist);
         if (res.BoostedCount > 0)
         {
             StatusFooterText.Text = isEn
@@ -704,28 +1024,38 @@ public partial class MainWindow : Window
 
     private void PollActiveGames()
     {
-        var games = GameSentinelService.GetActiveGames(!LocalizationService.IsEnglish);
+        var games = GameBoostService.GetActiveGames(!LocalizationService.IsEnglish, _settings.CustomGameProcesses, _settings.ProcessWhitelist);
         ViewGames.UpdateActiveGames(games);
     }
 
     // Modern Confirm Dialog
     public async Task<bool> ShowModernConfirmDialogAsync(string title, string message, string confirmText, string cancelText, string iconKey)
     {
-        ModalDialogTitle.Text = title;
-        ModalDialogMessage.Text = message;
-        BtnModalConfirm.Content = confirmText;
-        BtnModalCancel.Content = cancelText;
-
-        if (TryFindResource(iconKey) is Geometry g)
+        await _modalSemaphore.WaitAsync();
+        try
         {
-            ModalIconPath.Data = g;
-        }
+            ModalDialogTitle.Text = title;
+            ModalDialogSub.Text = LocalizationService.IsEnglish ? "Action requires confirmation" : "Действие требует подтверждения";
+            ModalDialogMessage.Text = message;
+            BtnModalConfirm.Content = confirmText;
+            BtnModalCancel.Content = cancelText;
 
-        ModernModalOverlay.Visibility = Visibility.Visible;
-        _modalTcs = new TaskCompletionSource<bool>();
-        bool result = await _modalTcs.Task;
-        ModernModalOverlay.Visibility = Visibility.Collapsed;
-        return result;
+            if (TryFindResource(iconKey) is Geometry g)
+            {
+                ModalIconPath.Data = g;
+            }
+
+            _modalTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            ModernModalOverlay.Visibility = Visibility.Visible;
+            bool result = await _modalTcs.Task;
+            ModernModalOverlay.Visibility = Visibility.Collapsed;
+            _modalTcs = null;
+            return result;
+        }
+        finally
+        {
+            _modalSemaphore.Release();
+        }
     }
 
     private void BtnModalConfirm_Click(object sender, RoutedEventArgs e) => _modalTcs?.TrySetResult(true);
@@ -879,10 +1209,16 @@ public partial class MainWindow : Window
             if (ev.Key == Key.Enter)
             {
                 if (double.TryParse(customBox.Text.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out double sec)
-                    && sec >= 0.2 && sec <= 60.0)
+                    && sec >= 0.5 && sec <= 30.0)
                 {
                     ApplyInterval(sec);
                     cm.IsOpen = false;
+                }
+                else
+                {
+                    StatusFooterText.Text = isEn
+                        ? "Telemetry interval must be between 0.5s and 30s."
+                        : "Интервал телеметрии должен быть от 0.5 до 30 сек.";
                 }
                 ev.Handled = true;
             }
@@ -984,7 +1320,7 @@ public partial class MainWindow : Window
         cm.IsOpen = true;
     }
 
-    private async void ResetSettings()
+    private async Task ResetSettingsAsync()
     {
         try
         {
@@ -1002,21 +1338,136 @@ public partial class MainWindow : Window
 
             _settings = new UserSettingsModel();
             SettingsPersistenceService.Save(_settings);
+            ApplyFullReloadedSettings();
 
-            LoadAndApplyUserSettings();
-            InitNavigationTabs();
-            _telemetryTimer.Interval = TimeSpan.FromSeconds(_telemetryIntervalSeconds);
-            ApplyLanguageStrings();
-            SetTheme(_isLightTheme);
-            UpdateTelemetry();
-            UpdateFooterClock();
-            _ = ViewStorage.ScanJunkAsync(showLog: false);
-
-            StatusFooterText.Text = "Settings have been reset to factory defaults.";
+            StatusFooterText.Text = isEn
+                ? "Settings have been reset to factory defaults."
+                : "Настройки сброшены на значения по умолчанию.";
         }
         catch (Exception ex)
         {
             Logger.Error("Reset settings failed", ex);
+        }
+    }
+
+    private void ApplyFullReloadedSettings()
+    {
+        LoadAndApplyUserSettings();
+        _trayService?.SetHotkeysEnabled(_settings.EnableGlobalHotkeys);
+        InitNavigationTabs();
+        _telemetryTimer.Interval = TimeSpan.FromSeconds(_telemetryIntervalSeconds);
+        ApplyLanguageStrings();
+        SetTheme(_isLightTheme);
+        UpdateTelemetry();
+        UpdateFooterClock();
+        _ = ViewStorage.ScanJunkAsync(showLog: false);
+    }
+
+    private static string GetDownloadsDirectory()
+    {
+        string downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        return Directory.Exists(downloads) ? downloads : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    }
+
+    private void ExportBackupToCsb()
+    {
+        bool isEn = LocalizationService.IsEnglish;
+        try
+        {
+            SaveCurrentUserSettings();
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = isEn ? "Save Settings Backup (.csb)" : "Сохранить резервную копию настроек (.csb)",
+                Filter = isEn ? "CoreSpectre Backup (*.csb)|*.csb" : "Резервная копия CoreSpectre (*.csb)|*.csb",
+                DefaultExt = ".csb",
+                InitialDirectory = GetDownloadsDirectory(),
+                FileName = $"CoreSpectre-backup-{DateTime.Now:yyyy-MM-dd}.csb"
+            };
+
+            if (dlg.ShowDialog(this) == true)
+            {
+                var (ok, message) = SettingsPersistenceService.ExportBackup(dlg.FileName, _settings, isEn);
+                StatusFooterText.Text = message;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Export .csb backup failed", ex);
+            StatusFooterText.Text = isEn ? $"Backup export failed: {ex.Message}" : $"Ошибка экспорта .csb: {ex.Message}";
+        }
+    }
+
+    private async Task ImportBackupFromCsbAsync()
+    {
+        bool isEn = LocalizationService.IsEnglish;
+        try
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = isEn ? "Load Settings Backup (.csb)" : "Загрузить резервную копию настроек (.csb)",
+                Filter = isEn ? "CoreSpectre Backup (*.csb)|*.csb" : "Резервная копия CoreSpectre (*.csb)|*.csb",
+                DefaultExt = ".csb",
+                InitialDirectory = GetDownloadsDirectory()
+            };
+
+            if (dlg.ShowDialog(this) != true) return;
+            await ImportBackupFileAsync(dlg.FileName);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Import .csb backup failed", ex);
+            StatusFooterText.Text = isEn ? $"Backup import failed: {ex.Message}" : $"Ошибка загрузки .csb: {ex.Message}";
+        }
+    }
+
+    public async Task ImportBackupFileAsync(string filePath)
+    {
+        bool isEn = LocalizationService.IsEnglish;
+        try
+        {
+            var (ok, imported, message) = SettingsPersistenceService.ImportBackup(filePath, isEn);
+            if (!ok || imported == null)
+            {
+                StatusFooterText.Text = message;
+                return;
+            }
+
+            string confirmTitle = isEn ? "Apply These Settings?" : "Применить данные настройки?";
+            string confirmMsg = isEn
+                ? $"Apply configuration from '{Path.GetFileName(filePath)}'?\nCurrent theme, language, alert thresholds, tabs, cleanup choices, and whitelist will be updated."
+                : $"Применить данные настройки из «{Path.GetFileName(filePath)}»?\nТекущие тема, язык, пороги, вкладки, параметры очистки и исключения будут обновлены.";
+
+            bool confirmed = await ShowModernConfirmDialogAsync(
+                confirmTitle,
+                confirmMsg,
+                isEn ? "Apply" : "Применить",
+                isEn ? "Cancel" : "Отмена",
+                "IconFloppyDisk");
+
+            if (!confirmed) return;
+
+            _settings = imported;
+            SettingsPersistenceService.Save(_settings);
+            ApplyFullReloadedSettings();
+            StatusFooterText.Text = message;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Import .csb file failed", ex);
+            StatusFooterText.Text = isEn ? $"Backup import failed: {ex.Message}" : $"Ошибка загрузки .csb: {ex.Message}";
+        }
+    }
+
+    public void HandleExternalCsbOpen(string? csbPath)
+    {
+        RestoreFromTray();
+        Topmost = true;
+        Topmost = false;
+        Activate();
+
+        if (!string.IsNullOrWhiteSpace(csbPath) && File.Exists(csbPath))
+        {
+            _ = ImportBackupFileAsync(csbPath);
         }
     }
 
@@ -1038,7 +1489,7 @@ public partial class MainWindow : Window
                 IconKey = _isCpuPurgeMode ? "IconCpu" : "IconRam"
             },
             ["storage"] = new() { Key = "storage", TagIndex = 2, EnTitle = storageTitleEn, RuTitle = storageTitleRu, IconKey = "IconHardDrive" },
-            ["games"] = new() { Key = "games", TagIndex = 3, EnTitle = "Game Sentinel", RuTitle = "Игровой модуль", IconKey = "IconGamepad" },
+            ["games"] = new() { Key = "games", TagIndex = 3, EnTitle = "Game Mode", RuTitle = "Игровой модуль", IconKey = "IconGamepad" },
             ["settings"] = new() { Key = "settings", TagIndex = 4, EnTitle = "Settings", RuTitle = "Настройки", IconKey = "IconGear" }
         };
 
@@ -1468,7 +1919,7 @@ public partial class MainWindow : Window
         }
         else if (WindowState != WindowState.Maximized && e.LeftButton == MouseButtonState.Pressed)
         {
-            DragMove();
+            try { DragMove(); } catch { }
         }
     }
 
@@ -1478,10 +1929,11 @@ public partial class MainWindow : Window
         {
             ResizeMode = ResizeMode.CanResize;
             WindowState = WindowState.Normal;
-            Width = 1080;
-            Height = 720;
-            Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
-            Top = (SystemParameters.PrimaryScreenHeight - Height) / 2;
+            var workArea = SystemParameters.WorkArea;
+            Width = Math.Min(1080, workArea.Width);
+            Height = Math.Min(720, workArea.Height);
+            Left = workArea.Left + (workArea.Width - Width) / 2;
+            Top = workArea.Top + (workArea.Height - Height) / 2;
         }
         else
         {
@@ -1494,6 +1946,19 @@ public partial class MainWindow : Window
     private void BtnMaximize_Click(object sender, RoutedEventArgs e) => ToggleFullscreen();
     private void BtnClose_Click(object sender, RoutedEventArgs e) => Close();
 
+    private void RestoreFromTray()
+    {
+        Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    private void ExitApplicationFromTray()
+    {
+        _forceExit = true;
+        Close();
+    }
+
     private void CpuMetric_Click(object sender, MouseButtonEventArgs e)
     {
         SetPurgeTabMode(isCpu: true);
@@ -1504,7 +1969,7 @@ public partial class MainWindow : Window
         SetPurgeTabMode(isCpu: false);
         HighlightTab(1);
     }
-    private void DiskMetric_Click(object sender, MouseButtonEventArgs e) => OpenDriveExplorer(HardwareTelemetry.GetSystemDriveLetter());
+    private void DiskMetric_Click(object sender, MouseButtonEventArgs e) => OpenDriveExplorer(_watchedDriveLetter);
     private void GameModeIndicator_Click(object sender, MouseButtonEventArgs e) => HighlightTab(3);
     private void BtnToggleHud_Click(object sender, RoutedEventArgs e) => ToggleHudWindow();
 
@@ -1524,12 +1989,38 @@ public partial class MainWindow : Window
         }
     }
 
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        if (_settings.MinimizeToTray && !_forceExit && IsVisible)
+        {
+            e.Cancel = true;
+            Hide();
+            if (!_trayHintShown)
+            {
+                _trayHintShown = true;
+                bool isEn = LocalizationService.IsEnglish;
+                _trayService?.ShowBalloon(
+                    "CoreSpectre",
+                    isEn
+                        ? "Minimized to system tray. Use Ctrl+Shift+H to toggle HUD or right-click tray icon to exit."
+                        : "Свёрнуто в трей. Ctrl+Shift+H переключает HUD, правый клик по значку — выход.");
+            }
+            return;
+        }
+        _modalTcs?.TrySetResult(false);
+        base.OnClosing(e);
+    }
+
     protected override void OnClosed(EventArgs e)
     {
+        SettingsPersistenceService.OnSettingsError -= HandleSettingsError;
         SaveCurrentUserSettings();
+        GameBoostService.RestoreAllGamePriorities();
         _telemetryTimer.Stop();
         _clockTimer.Stop();
         ViewStorage.StopAutoScan();
+        _trayService?.Dispose();
+        _trayService = null;
         if (_hudWindow != null && _hudWindow.IsLoaded)
         {
             _hudWindow.Close();

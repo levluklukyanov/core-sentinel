@@ -122,7 +122,7 @@ public partial class GamesView : UserControl
 
         try
         {
-            _installedGames = await GameSentinelService.ScanInstalledGamesAsync(_gameDriveFilter, !isEn, _includeLaunchers);
+            _installedGames = await GameBoostService.ScanInstalledGamesAsync(_gameDriveFilter, !isEn, _includeLaunchers);
             ListInstalledGames.ItemsSource = _installedGames;
             TxtScanPlaceholder.Visibility = _installedGames.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
@@ -199,7 +199,9 @@ public partial class GamesView : UserControl
         {
             try
             {
-                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
+                string safePath = Path.GetFullPath(path);
+                string explorerPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+                Process.Start(new ProcessStartInfo(explorerPath, $"\"{safePath}\"") { UseShellExecute = true });
             }
             catch (Exception ex)
             {

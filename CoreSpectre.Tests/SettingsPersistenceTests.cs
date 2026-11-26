@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using System.Text.Json;
 using CoreSpectre.Services;
 using Xunit;
@@ -23,23 +25,28 @@ public class SettingsPersistenceTests
         Assert.Equal("C", model.WatchedDriveLetter);
         Assert.False(model.IncludeLaunchers);
         Assert.Equal("RAM", model.PurgeMode);
+        Assert.True(model.MinimizeToTray);
+        Assert.True(model.EnableGlobalHotkeys);
+        Assert.True(model.EnableThresholdAlerts);
 
-        // Core tabs must all be present
         Assert.Contains("overview", model.ActiveTabs);
         Assert.Contains("ram", model.ActiveTabs);
         Assert.Contains("storage", model.ActiveTabs);
         Assert.Contains("games", model.ActiveTabs);
         Assert.Contains("settings", model.ActiveTabs);
 
-        // Storage cleanup options
         Assert.True(model.CleanTempFiles);
         Assert.True(model.CleanSoftwareDistribution);
         Assert.True(model.CleanLogsAndReports);
         Assert.True(model.CleanDnsCache);
         Assert.False(model.CleanRecycleBin);
+        Assert.False(model.CleanGpuShaderCache);
+        Assert.False(model.CleanBrowserCache);
         Assert.True(model.CleanDismComponentCleanup);
         Assert.False(model.CleanDismResetBase);
         Assert.Equal("SizeDesc", model.StorageSortMode);
+        Assert.False(model.RunAtStartup);
+        Assert.Equal(0, model.TempMinAgeDays);
     }
 
     [Fact]
@@ -67,9 +74,16 @@ public class SettingsPersistenceTests
             CleanLogsAndReports = false,
             CleanDnsCache = false,
             CleanRecycleBin = true,
+            CleanGpuShaderCache = true,
+            CleanBrowserCache = true,
             CleanDismComponentCleanup = false,
             CleanDismResetBase = true,
-            StorageSortMode = "NameAsc"
+            StorageSortMode = "NameAsc",
+            MinimizeToTray = false,
+            EnableGlobalHotkeys = false,
+            EnableThresholdAlerts = false,
+            ProcessWhitelist = new List<string> { "discord", "obs64" },
+            CustomGameProcesses = new List<string> { "valorant" }
         };
 
         var options = new JsonSerializerOptions
@@ -102,8 +116,139 @@ public class SettingsPersistenceTests
         Assert.False(restored.CleanLogsAndReports);
         Assert.False(restored.CleanDnsCache);
         Assert.True(restored.CleanRecycleBin);
+        Assert.True(restored.CleanGpuShaderCache);
+        Assert.True(restored.CleanBrowserCache);
         Assert.False(restored.CleanDismComponentCleanup);
         Assert.True(restored.CleanDismResetBase);
         Assert.Equal("NameAsc", restored.StorageSortMode);
+        Assert.False(restored.MinimizeToTray);
+        Assert.Contains("discord", restored.ProcessWhitelist);
+        Assert.Contains("valorant", restored.CustomGameProcesses);
+    }
+
+    [Fact]
+    public void BackupCsb_ExportAndImport_PreservesSettingsAndRejectsTamperedFiles()
+    {
+        string backupPath = Path.Combine(AppContext.BaseDirectory, $"test_backup_{Guid.NewGuid():N}.csb");
+        try
+        {
+            var settings = new UserSettingsModel
+            {
+                Language = "RU",
+                Theme = "Light",
+                WatchedDriveLetter = "D",
+                MinimizeToTray = false,
+                ProcessWhitelist = new List<string> { "obs64" },
+                CustomGameProcesses = new List<string> { "eldenring" }
+            };
+
+            var (okExport, _) = SettingsPersistenceService.ExportBackup(backupPath, settings, isEn: true);
+            Assert.True(okExport);
+            Assert.True(File.Exists(backupPath));
+
+            var (okImport, imported, _) = SettingsPersistenceService.ImportBackup(backupPath, isEn: true);
+            Assert.True(okImport);
+            Assert.NotNull(imported);
+            Assert.Equal("RU", imported.Language);
+            Assert.Equal("Light", imported.Theme);
+            Assert.Equal("D", imported.WatchedDriveLetter);
+            Assert.False(imported.MinimizeToTray);
+            Assert.Contains("obs64", imported.ProcessWhitelist);
+            Assert.Contains("eldenring", imported.CustomGameProcesses);
+
+            // Tamper file without updating SHA-256 checksum
+            string tampered = File.ReadAllText(backupPath).Replace("\"Language\": \"RU\"", "\"Language\": \"EN\"");
+            File.WriteAllText(backupPath, tampered);
+
+            var (okTampered, _, _) = SettingsPersistenceService.ImportBackup(backupPath, isEn: true);
+            Assert.False(okTampered);
+        }
+        finally
+        {
+            if (File.Exists(backupPath)) File.Delete(backupPath);
+        }
+    }
+
+    [Theory]
+    [InlineData("d:", "D")]
+    [InlineData("C", "C")]
+    [InlineData("C:\\Windows\\System32", "C")]
+    [InlineData("123", "C")]
+    [InlineData("", "C")]
+    public void NormalizeDriveLetter_ValidatesStrictAsciiDriveLetter(string input, string expected)
+    {
+        Assert.Equal(expected, SettingsPersistenceService.NormalizeDriveLetter(input, "C"));
+    }
+
+    [Fact]
+    public void LoadAndSave_SanitizesOutOfRangeValuesAndPersistsCleanly()
+    {
+        string tempSettingsPath = Path.Combine(AppContext.BaseDirectory, $"test_persist_{Guid.NewGuid():N}.json");
+        SettingsPersistenceService.SettingsPathOverride = tempSettingsPath;
+        try
+        {
+            var dirty = new UserSettingsModel
+            {
+                Language = "FR",
+                Theme = "InvalidTheme",
+                TelemetryInterval = 0.01,
+                DiskWarningThresholdGb = 5000.0,
+                CpuAlertThreshold = 5.0,
+                RamAlertThreshold = 150.0,
+                HudOpacity = 5.0,
+                WatchedDriveLetter = "INVALID",
+                TempMinAgeDays = 99
+            };
+
+            Assert.True(SettingsPersistenceService.Save(dirty));
+            var loaded = SettingsPersistenceService.Load();
+
+            Assert.Equal("EN", loaded.Language);
+            Assert.Equal("Dark", loaded.Theme);
+            Assert.Equal(0.5, loaded.TelemetryInterval);
+            Assert.Equal(500.0, loaded.DiskWarningThresholdGb);
+            Assert.Equal(10.0, loaded.CpuAlertThreshold);
+            Assert.Equal(100.0, loaded.RamAlertThreshold);
+            Assert.Equal(20.0, loaded.HudOpacity);
+            Assert.Equal("C", loaded.WatchedDriveLetter);
+            Assert.Equal(90, loaded.TempMinAgeDays);
+        }
+        finally
+        {
+            SettingsPersistenceService.SettingsPathOverride = null;
+            if (File.Exists(tempSettingsPath)) File.Delete(tempSettingsPath);
+        }
+    }
+
+    [Fact]
+    public void ImportBackup_RemainsValidForMinimalLegacyPayloadWhenChecksumMatches()
+    {
+        string backupPath = Path.Combine(AppContext.BaseDirectory, $"test_legacy_{Guid.NewGuid():N}.csb");
+        try
+        {
+            var payload = new { Language = "RU", Theme = "Light" };
+            string canonical = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = false });
+            string sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical)));
+            string docJson = JsonSerializer.Serialize(new
+            {
+                Format = "CoreSpectreBackup",
+                Version = 1,
+                AppVersion = "1.1.0",
+                ExportedAtUtc = DateTime.UtcNow,
+                Checksum = sha,
+                Settings = payload
+            }, new JsonSerializerOptions { WriteIndented = true });
+
+            File.WriteAllText(backupPath, docJson);
+            var (ok, model, _) = SettingsPersistenceService.ImportBackup(backupPath, isEn: true);
+            Assert.True(ok);
+            Assert.NotNull(model);
+            Assert.Equal("RU", model.Language);
+            Assert.Equal("Light", model.Theme);
+        }
+        finally
+        {
+            if (File.Exists(backupPath)) File.Delete(backupPath);
+        }
     }
 }
