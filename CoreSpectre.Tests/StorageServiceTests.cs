@@ -1,5 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using CoreSpectre.Services;
 using Xunit;
 
@@ -259,6 +263,127 @@ public class StorageServiceTests
         finally
         {
             if (Directory.Exists(testDir)) Directory.Delete(testDir, true);
+        }
+    }
+
+    [Fact]
+    public void WatchdogTimeouts_MeetMinimumFifteenMinuteRequirement()
+    {
+        Assert.True(StorageService.LongSystemOperationInactivityTimeout >= TimeSpan.FromMinutes(15));
+        Assert.True(StorageService.ElevatedWorkerInactivityTimeout > StorageService.LongSystemOperationInactivityTimeout);
+    }
+
+    [Fact]
+    public async Task RunProcessWithWatchdogAsync_ResetsWatchdogOnOutputAndCompletes()
+    {
+        var lines = new List<string>();
+        string cmdPath = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        var psi = new ProcessStartInfo(
+            cmdPath,
+            "/c \"echo tick-1 & ping -n 2 127.0.0.1 >nul & echo tick-2 & ping -n 2 127.0.0.1 >nul & echo tick-3 & ping -n 2 127.0.0.1 >nul & echo tick-4\"");
+
+        // Total runtime ~3s > 1.8s inactivity timeout, so it only succeeds if output resets the watchdog.
+        var res = await StorageService.RunProcessWithWatchdogAsync(
+            psi,
+            TimeSpan.FromMilliseconds(1800),
+            line => lines.Add(line));
+
+        Assert.False(res.TimedOut);
+        Assert.False(res.Cancelled);
+        Assert.Equal(0, res.ExitCode);
+        Assert.Equal(4, lines.Count);
+    }
+
+    [Fact]
+    public async Task RunProcessWithWatchdogAsync_KillsEntireProcessTreeOnInactivityTimeout()
+    {
+        int childPid = 0;
+        var captured = new List<string>();
+        string psPath = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+        string cmdPath = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        string script = $"$si = New-Object System.Diagnostics.ProcessStartInfo('{cmdPath}', '/c ping -n 30 127.0.0.1 >nul'); $si.CreateNoWindow = $true; $si.UseShellExecute = $false; $p = [System.Diagnostics.Process]::Start($si); Write-Output ('CHILD_PID:' + $p.Id); Start-Sleep -Seconds 35";
+        var psi = new ProcessStartInfo(psPath, $"-NoProfile -NonInteractive -Command \"{script}\"");
+
+        var res = await StorageService.RunProcessWithWatchdogAsync(
+            psi,
+            TimeSpan.FromSeconds(8),
+            line =>
+            {
+                captured.Add(line);
+                if (line.StartsWith("CHILD_PID:", StringComparison.Ordinal) &&
+                    int.TryParse(line["CHILD_PID:".Length..], out int parsed))
+                {
+                    childPid = parsed;
+                }
+            });
+
+        try
+        {
+            Assert.True(res.TimedOut);
+            Assert.False(res.Cancelled);
+            Assert.True(childPid > 0, $"Expected child PID from test process. Output: {string.Join(" | ", captured)}");
+            await Task.Delay(150);
+            Assert.True(IsProcessExited(childPid), $"Child process {childPid} should have been terminated with entireProcessTree: true");
+        }
+        finally
+        {
+            if (childPid > 0)
+            {
+                try { Process.GetProcessById(childPid).Kill(entireProcessTree: true); } catch { }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RunProcessWithWatchdogAsync_KillsEntireProcessTreeOnCancellation()
+    {
+        int childPid = 0;
+        using var cts = new CancellationTokenSource();
+        string psPath = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+        string script = "$p = Start-Process -FilePath '" + psPath + "' -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30' -WindowStyle Hidden -PassThru; Write-Output ('CHILD_PID:' + $p.Id); Start-Sleep -Seconds 30";
+        var psi = new ProcessStartInfo(psPath, $"-NoProfile -NonInteractive -Command \"{script}\"");
+
+        var res = await StorageService.RunProcessWithWatchdogAsync(
+            psi,
+            TimeSpan.FromSeconds(15),
+            line =>
+            {
+                if (line.StartsWith("CHILD_PID:", StringComparison.Ordinal) &&
+                    int.TryParse(line["CHILD_PID:".Length..], out int parsed))
+                {
+                    childPid = parsed;
+                    cts.Cancel();
+                }
+            },
+            cts.Token);
+
+        try
+        {
+            Assert.True(res.Cancelled);
+            Assert.False(res.TimedOut);
+            Assert.True(childPid > 0, "Expected child PID from test process");
+            await Task.Delay(150);
+            Assert.True(IsProcessExited(childPid), $"Child process {childPid} should have been terminated on cancellation");
+        }
+        finally
+        {
+            if (childPid > 0)
+            {
+                try { Process.GetProcessById(childPid).Kill(entireProcessTree: true); } catch { }
+            }
+        }
+    }
+
+    private static bool IsProcessExited(int pid)
+    {
+        try
+        {
+            using var p = Process.GetProcessById(pid);
+            return p.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return true;
         }
     }
 }

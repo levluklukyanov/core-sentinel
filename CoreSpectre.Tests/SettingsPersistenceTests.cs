@@ -25,7 +25,6 @@ public class SettingsPersistenceTests
         Assert.Equal("C", model.WatchedDriveLetter);
         Assert.False(model.IncludeLaunchers);
         Assert.Equal("RAM", model.PurgeMode);
-        Assert.True(model.MinimizeToTray);
         Assert.True(model.EnableGlobalHotkeys);
         Assert.True(model.EnableThresholdAlerts);
 
@@ -79,7 +78,6 @@ public class SettingsPersistenceTests
             CleanDismComponentCleanup = false,
             CleanDismResetBase = true,
             StorageSortMode = "NameAsc",
-            MinimizeToTray = false,
             EnableGlobalHotkeys = false,
             EnableThresholdAlerts = false,
             ProcessWhitelist = new List<string> { "discord", "obs64" },
@@ -121,7 +119,6 @@ public class SettingsPersistenceTests
         Assert.False(restored.CleanDismComponentCleanup);
         Assert.True(restored.CleanDismResetBase);
         Assert.Equal("NameAsc", restored.StorageSortMode);
-        Assert.False(restored.MinimizeToTray);
         Assert.Contains("discord", restored.ProcessWhitelist);
         Assert.Contains("valorant", restored.CustomGameProcesses);
     }
@@ -137,7 +134,6 @@ public class SettingsPersistenceTests
                 Language = "RU",
                 Theme = "Light",
                 WatchedDriveLetter = "D",
-                MinimizeToTray = false,
                 ProcessWhitelist = new List<string> { "obs64" },
                 CustomGameProcesses = new List<string> { "eldenring" }
             };
@@ -152,7 +148,6 @@ public class SettingsPersistenceTests
             Assert.Equal("RU", imported.Language);
             Assert.Equal("Light", imported.Theme);
             Assert.Equal("D", imported.WatchedDriveLetter);
-            Assert.False(imported.MinimizeToTray);
             Assert.Contains("obs64", imported.ProcessWhitelist);
             Assert.Contains("eldenring", imported.CustomGameProcesses);
 

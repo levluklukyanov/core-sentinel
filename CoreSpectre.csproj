@@ -9,6 +9,11 @@
     <LangVersion>13</LangVersion>
     <RootNamespace>CoreSpectre</RootNamespace>
     <AssemblyName>CoreSpectre</AssemblyName>
+    <AssemblyTitle>CoreSpectre</AssemblyTitle>
+    <Product>CoreSpectre System Utility</Product>
+    <Company>Lev Lukyanov</Company>
+    <Copyright>Copyright © 2026 Lev Lukyanov</Copyright>
+    <Description>Hardware telemetry, process optimization and disk cleanup utility for Windows</Description>
     <Version>1.2.0</Version>
     <AssemblyVersion>1.2.0.0</AssemblyVersion>
     <FileVersion>1.2.0.0</FileVersion>

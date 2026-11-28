@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -16,13 +18,22 @@ using CoreSpectre.Services;
 
 namespace CoreSpectre.Views;
 
+public enum CompactOsState
+{
+    Off,
+    On,
+    Enabling,
+    Disabling
+}
+
 public record CleanTargetItem(string Key, string Name, string Path, string FormattedSize, long Bytes, bool IsSelected = true, bool RequiresAdmin = false);
 
-public partial class StorageView : UserControl
+public partial class StorageView : UserControl, INotifyPropertyChanged
 {
     private bool _isStorageOperationRunning = false;
     private bool _isScanningTargets = false;
-    private bool _isCompactOsBusy = false;
+    private bool _isCompactOsPromptOpen = false;
+    private CompactOsState _compactOsState = CompactOsState.Off;
     private int _analyzerViewMode = 0; // 0 = Targets, 1 = Large Folders, 2 = Large Files & Backups
     private int _storageCooldownRemaining = 0;
     private DispatcherTimer? _storageCooldownTimer;
@@ -42,11 +53,61 @@ public partial class StorageView : UserControl
     public event Action<FrameworkElement>? OnDiskDropdownRequested;
     public event Action<string>? OnStatusChanged;
     public event Action? OnCleanupCompleted;
+    public event PropertyChangedEventHandler? PropertyChanged;
     public Func<string, string, string, string, string, Task<bool>>? ShowConfirmDialogAsync { get; set; }
+
+    public CompactOsState CompactOsState
+    {
+        get => _compactOsState;
+        internal set
+        {
+            if (_compactOsState != value)
+            {
+                _compactOsState = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(CompactOsButtonText));
+                OnPropertyChanged(nameof(CanExecuteCompactOs));
+            }
+        }
+    }
+
+    public string CompactOsButtonText => CompactOsState switch
+    {
+        CompactOsState.On => LocalizationService.Get("Storage.CompactOsOn"),
+        CompactOsState.Enabling => LocalizationService.Get("Storage.CompactOsEnabling"),
+        CompactOsState.Disabling => LocalizationService.Get("Storage.CompactOsDisabling"),
+        _ => LocalizationService.Get("Storage.CompactOsOff")
+    };
+
+    public bool CanExecuteCompactOs =>
+        CompactOsState is not (CompactOsState.Enabling or CompactOsState.Disabling);
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        if (propertyName is nameof(CompactOsButtonText) or nameof(CanExecuteCompactOs))
+        {
+            SyncCompactOsControls();
+        }
+    }
+
+    private void SyncCompactOsControls()
+    {
+        if (BtnCompactOs != null)
+        {
+            BtnCompactOs.SetCurrentValue(IsEnabledProperty, CanExecuteCompactOs);
+        }
+        if (BtnCompactOsText != null)
+        {
+            BtnCompactOsText.SetCurrentValue(TextBlock.TextProperty, CompactOsButtonText);
+        }
+    }
 
     public StorageView()
     {
         InitializeComponent();
+        RootGrid.DataContext = this;
+        SyncCompactOsControls();
         _settings = SettingsPersistenceService.Load();
         _currentSortMode = _settings.StorageSortMode ?? "SizeDesc";
         UpdateSortButtonText();
@@ -101,6 +162,11 @@ public partial class StorageView : UserControl
     public void ApplyLanguage(string language)
     {
         bool isEn = language == "EN";
+        string normalizedLang = isEn ? "EN" : "RU";
+        if (LocalizationService.CurrentLanguage != normalizedLang)
+        {
+            LocalizationService.CurrentLanguage = normalizedLang;
+        }
         StorageTabHeading.Text = isEn ? $"Storage & System Cleanup ({_watchedDriveLetter}:)" : $"Хранилище и системная очистка ({_watchedDriveLetter}:)";
         StorageTabSub.Text = LocalizationService.Get("Storage.Subtitle");
         StorageGaugeTitle.Text = isEn ? $"Storage Capacity ({_watchedDriveLetter}:):" : $"Емкость накопителя ({_watchedDriveLetter}:):";
@@ -137,7 +203,11 @@ public partial class StorageView : UserControl
         }
 
         UpdateSortButtonText();
-        _ = RefreshCompactOsButtonAsync();
+        OnPropertyChanged(nameof(CompactOsButtonText));
+        if (CanExecuteCompactOs)
+        {
+            _ = RefreshCompactOsButtonAsync();
+        }
     }
 
     public void UpdateCapacity(string driveLetter, double freeGb, double totalGb)
@@ -399,22 +469,25 @@ public partial class StorageView : UserControl
 
     private async Task RefreshCompactOsButtonAsync()
     {
+        if (!CanExecuteCompactOs) return;
+
         try
         {
             bool enabled = await StorageService.IsCompactOsEnabledAsync();
-            bool isEn = LocalizationService.IsEnglish;
-            BtnCompactOsText.Text = enabled
-                ? (isEn ? "CompactOS: On" : "CompactOS: Вкл")
-                : (isEn ? "CompactOS: Off" : "CompactOS: Выкл");
+            if (!CanExecuteCompactOs) return;
+            CompactOsState = enabled ? CompactOsState.On : CompactOsState.Off;
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Logger.Debug($"RefreshCompactOsButtonAsync failed: {ex.Message}");
+        }
     }
 
     private async void BtnCompactOs_Click(object sender, RoutedEventArgs e)
     {
-        if (_isCompactOsBusy || _isStorageOperationRunning) return;
-        _isCompactOsBusy = true;
-        BtnCompactOs.IsEnabled = false;
+        if (!CanExecuteCompactOs || _isCompactOsPromptOpen || _isStorageOperationRunning) return;
+        _isCompactOsPromptOpen = true;
+        bool enteredTransition = false;
 
         bool isEn = LocalizationService.IsEnglish;
         bool isAdmin = StorageService.IsAdministrator();
@@ -442,20 +515,27 @@ public partial class StorageView : UserControl
                     return;
             }
 
-            BtnCompactOsText.Text = isEn ? "CompactOS: Working..." : "CompactOS: Работа...";
-            LogStorage(isEn ? "[CompactOS] Applying compression state (may take 1-2 min)..." : "[CompactOS] Применение состояния (может занять 1–2 мин)...");
-            OnStatusChanged?.Invoke(isEn ? "Applying CompactOS state..." : "Применение состояния CompactOS...");
+            enteredTransition = true;
+            CompactOsState = wantEnable ? CompactOsState.Enabling : CompactOsState.Disabling;
+            bool currentIsEn = LocalizationService.IsEnglish;
+            LogStorage(currentIsEn
+                ? "[CompactOS] Applying compression state (this may take several minutes)..."
+                : "[CompactOS] Применение состояния сжатия (может занять несколько минут)...");
+            OnStatusChanged?.Invoke(currentIsEn ? "Applying CompactOS state..." : "Применение состояния CompactOS...");
 
             if (isAdmin)
             {
-                var (_, message) = await StorageService.SetCompactOsAsync(wantEnable, isEn);
+                var (_, message) = await StorageService.SetCompactOsAsync(
+                    wantEnable,
+                    currentIsEn,
+                    line => LogStorage($"[CompactOS] {line}"));
                 LogStorage($"[CompactOS] {message}");
                 OnStatusChanged?.Invoke(message);
             }
             else
             {
                 var job = new ElevatedCleanupJob(
-                    IsEnglish: isEn,
+                    IsEnglish: currentIsEn,
                     CleanTemp: false,
                     CleanSoftwareDistribution: false,
                     CleanLogsAndReports: false,
@@ -467,7 +547,7 @@ public partial class StorageView : UserControl
                     Action: wantEnable ? "compact_on" : "compact_off"
                 );
                 var run = await StorageService.ExecuteViaElevatedWorkerAsync(job, line => LogStorage(line));
-                string statusMsg = run.Result?.SummaryMessage ?? run.ErrorMessage ?? (isEn ? "CompactOS finished." : "CompactOS завершён.");
+                string statusMsg = run.Result?.SummaryMessage ?? run.ErrorMessage ?? (LocalizationService.IsEnglish ? "CompactOS finished." : "CompactOS завершён.");
                 if (run.ElevationCancelled || !string.IsNullOrEmpty(run.ErrorMessage))
                 {
                     LogStorage($"[CompactOS] {statusMsg}");
@@ -477,10 +557,21 @@ public partial class StorageView : UserControl
         }
         finally
         {
-            await RefreshCompactOsButtonAsync();
-            BtnCompactOs.IsEnabled = true;
-            _isCompactOsBusy = false;
-            OnCleanupCompleted?.Invoke();
+            _isCompactOsPromptOpen = false;
+            if (enteredTransition)
+            {
+                bool enabled = false;
+                try
+                {
+                    enabled = await StorageService.IsCompactOsEnabledAsync();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Debug($"CompactOS final state query failed: {ex.Message}");
+                }
+                CompactOsState = enabled ? CompactOsState.On : CompactOsState.Off;
+                OnCleanupCompleted?.Invoke();
+            }
         }
     }
 

@@ -273,20 +273,6 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                    <TextBlock x:Name="MinimizeTrayTitle" Text="Minimize to System Tray on Close" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
-                                    <TextBlock x:Name="MinimizeTrayDesc" Text="Keep background telemetry and hotkeys running when closing the window" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,10,0"/>
-                                </StackPanel>
-                                <Button Grid.Column="1" x:Name="BtnToggleMinimizeToTray" Style="{StaticResource BtnPrimaryWhite}" Click="BtnToggleMinimizeToTray_Click" Padding="14,6" VerticalAlignment="Center">
-                                    <TextBlock x:Name="TxtMinimizeToTrayStatus" Text="Enabled" FontSize="12" FontWeight="SemiBold"/>
-                                </Button>
-                            </Grid>
-
-                            <Grid Margin="0,0,0,12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
                                     <TextBlock x:Name="HotkeysTitle" Text="Global HUD Hotkeys (Ctrl+Shift+H / L)" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}"/>
                                     <TextBlock x:Name="HotkeysDesc" Text="Toggle HUD visibility (Ctrl+Shift+H) and Click-Through (Ctrl+Shift+L) in games" FontSize="11.5" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,10,0"/>
                                 </StackPanel>

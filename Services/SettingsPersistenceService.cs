@@ -43,7 +43,6 @@ public class UserSettingsModel
     public List<string> DisabledCleanupTargets { get; set; } = new();
 
     // Extended usability, safety and automation features
-    public bool MinimizeToTray { get; set; } = true;
     public bool RunAtStartup { get; set; } = false;
     public bool EnableGlobalHotkeys { get; set; } = true;
     public bool EnableThresholdAlerts { get; set; } = true;

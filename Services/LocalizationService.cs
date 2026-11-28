@@ -58,6 +58,10 @@ public static class LocalizationService
         ["Storage.CleanBtn"] = ("Clean System Cache", "Очистить систему"),
         ["Storage.RollbackBtn"] = ("Rollback", "Откат системы"),
         ["Storage.ConsoleTitle"] = ("ACTIVITY & CLEANUP CONSOLE", "КОНСОЛЬ АКТИВНОСТИ И ОЧИСТКИ"),
+        ["Storage.CompactOsOff"] = ("CompactOS: Off", "CompactOS: Выкл"),
+        ["Storage.CompactOsOn"] = ("CompactOS: On", "CompactOS: Вкл"),
+        ["Storage.CompactOsEnabling"] = ("CompactOS: Enabling...", "CompactOS: Включение..."),
+        ["Storage.CompactOsDisabling"] = ("CompactOS: Disabling...", "CompactOS: Отключение..."),
 
         // Games Tab
         ["Games.Title"] = ("Game Mode & Catalog", "Игровой модуль и каталог игр"),

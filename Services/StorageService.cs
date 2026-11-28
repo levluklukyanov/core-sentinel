@@ -87,8 +87,113 @@ public record ElevatedWorkerRunResult(
     string? ErrorMessage
 );
 
+internal sealed record ProcessWatchdogResult(
+    int ExitCode,
+    bool TimedOut,
+    bool Cancelled
+);
+
 public static class StorageService
 {
+    internal static readonly TimeSpan LongSystemOperationInactivityTimeout = TimeSpan.FromMinutes(15);
+    internal static readonly TimeSpan ElevatedWorkerInactivityTimeout = TimeSpan.FromMinutes(16);
+
+    internal static async Task<ProcessWatchdogResult> RunProcessWithWatchdogAsync(
+        ProcessStartInfo psi,
+        TimeSpan inactivityTimeout,
+        Action<string>? onOutputLine = null,
+        CancellationToken cancellationToken = default)
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        Encoding outputEncoding = Encoding.UTF8;
+        try
+        {
+            outputEncoding = Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+        }
+        catch { }
+
+        psi.CreateNoWindow = true;
+        psi.UseShellExecute = false;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        psi.WindowStyle = ProcessWindowStyle.Hidden;
+        psi.StandardOutputEncoding ??= outputEncoding;
+        psi.StandardErrorEncoding ??= outputEncoding;
+
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException($"Failed to start process '{psi.FileName}'.");
+
+        using var watchdogCts = new CancellationTokenSource();
+        watchdogCts.CancelAfter(inactivityTimeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, watchdogCts.Token);
+
+        void ResetWatchdog()
+        {
+            try
+            {
+                if (!watchdogCts.IsCancellationRequested)
+                {
+                    watchdogCts.CancelAfter(inactivityTimeout);
+                }
+            }
+            catch (ObjectDisposedException) { }
+        }
+
+        async Task DrainStreamAsync(StreamReader reader)
+        {
+            try
+            {
+                while (true)
+                {
+                    string? line = await reader.ReadLineAsync(linkedCts.Token).ConfigureAwait(false);
+                    if (line == null) break;
+                    ResetWatchdog();
+                    string trimmed = line.Trim();
+                    if (!string.IsNullOrEmpty(trimmed))
+                    {
+                        onOutputLine?.Invoke(trimmed);
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
+            {
+            }
+        }
+
+        Task stdoutTask = DrainStreamAsync(proc.StandardOutput);
+        Task stderrTask = DrainStreamAsync(proc.StandardError);
+
+        try
+        {
+            await proc.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
+            await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+            return new ProcessWatchdogResult(proc.ExitCode, TimedOut: false, Cancelled: false);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!proc.HasExited)
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"Process tree kill failed for {psi.FileName}: {ex.Message}");
+            }
+
+            try
+            {
+                await Task.WhenAll(stdoutTask, stderrTask).WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            }
+            catch { }
+
+            bool cancelled = cancellationToken.IsCancellationRequested;
+            bool timedOut = !cancelled && watchdogCts.IsCancellationRequested;
+            return new ProcessWatchdogResult(-1, TimedOut: timedOut, Cancelled: cancelled);
+        }
+    }
     [DllImport("Shell32.dll", CharSet = CharSet.Unicode)]
     private static extern uint SHEmptyRecycleBin(IntPtr hwnd, string? pszRootPath, uint dwFlags);
 
@@ -1093,50 +1198,51 @@ public static class StorageService
                 try
                 {
                     string dismPath = Path.Combine(Environment.SystemDirectory, "dism.exe");
-                    var psi = new ProcessStartInfo(dismPath, dismArgs)
-                    {
-                        CreateNoWindow = true,
-                        UseShellExecute = false,
-                        WindowStyle = ProcessWindowStyle.Hidden
-                    };
+                    var psi = new ProcessStartInfo(dismPath, dismArgs);
 
-                    using var p = Process.Start(psi);
-                    if (p != null)
+                    DateTime lastProgressLogUtc = DateTime.MinValue;
+                    string lastLoggedLine = string.Empty;
+                    var dismResult = await RunProcessWithWatchdogAsync(
+                        psi,
+                        LongSystemOperationInactivityTimeout,
+                        line =>
+                        {
+                            bool isProgressBar = line.Contains('%') && (line.StartsWith('[') || line.Contains("=="));
+                            DateTime now = DateTime.UtcNow;
+                            if (isProgressBar)
+                            {
+                                if (line == lastLoggedLine || ((now - lastProgressLogUtc).TotalSeconds < 3 && !line.Contains("100.0%")))
+                                    return;
+                                lastProgressLogUtc = now;
+                            }
+                            lastLoggedLine = line;
+                            logCallback($"[DISM] {line}");
+                        },
+                        cancellationToken);
+
+                    if (dismResult.Cancelled)
                     {
-                        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(180));
-                        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
-                        try
-                        {
-                            await p.WaitForExitAsync(linkedCts.Token);
-                            if (p.ExitCode != 0)
-                            {
-                                hasErrors = true;
-                                logCallback(isEn
-                                    ? $"[DISM] Failed with ExitCode {p.ExitCode}."
-                                    : $"[DISM] Завершился с ошибкой (код выхода: {p.ExitCode}).");
-                            }
-                            else
-                            {
-                                logCallback(isEn
-                                    ? "[DISM] Component cleanup completed successfully."
-                                    : "[DISM] Очистка хранилища компонентов успешно завершена.");
-                            }
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            try { p.Kill(); } catch (Exception ex) { Logger.Debug("StorageService.cs: " + ex.Message); }
-                            if (cancellationToken.IsCancellationRequested)
-                            {
-                                logCallback(isEn ? "[DISM] Cancelled by user." : "[DISM] Отменено пользователем.");
-                            }
-                            else
-                            {
-                                hasErrors = true;
-                                logCallback(isEn
-                                    ? "[DISM] Operation timed out (exceeded 180s)."
-                                    : "[DISM] Операция прервана по тайм-ауту (более 180 сек).");
-                            }
-                        }
+                        logCallback(isEn ? "[DISM] Cancelled by user." : "[DISM] Отменено пользователем.");
+                    }
+                    else if (dismResult.TimedOut)
+                    {
+                        hasErrors = true;
+                        logCallback(isEn
+                            ? "[DISM] Operation timed out (no progress for 15 minutes)."
+                            : "[DISM] Операция прервана по тайм-ауту (нет отклика более 15 минут).");
+                    }
+                    else if (dismResult.ExitCode != 0)
+                    {
+                        hasErrors = true;
+                        logCallback(isEn
+                            ? $"[DISM] Failed with ExitCode {dismResult.ExitCode}."
+                            : $"[DISM] Завершился с ошибкой (код выхода: {dismResult.ExitCode}).");
+                    }
+                    else
+                    {
+                        logCallback(isEn
+                            ? "[DISM] Component cleanup completed successfully."
+                            : "[DISM] Очистка хранилища компонентов успешно завершена.");
                     }
                 }
                 catch (Exception ex)
@@ -1242,8 +1348,8 @@ public static class StorageService
                 await writer.WriteLineAsync(JsonSerializer.Serialize(job));
             }
 
-            using var execCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            execCts.CancelAfter(TimeSpan.FromMinutes(4));
+            using var workerWatchdogCts = new CancellationTokenSource(ElevatedWorkerInactivityTimeout);
+            using var execCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, workerWatchdogCts.Token);
             using var reader = new StreamReader(pipeServer, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
 
             CleanResult? adminResult = null;
@@ -1251,6 +1357,15 @@ public static class StorageService
             {
                 while (await reader.ReadLineAsync(execCts.Token) is { } frame)
                 {
+                    try
+                    {
+                        if (!workerWatchdogCts.IsCancellationRequested)
+                        {
+                            workerWatchdogCts.CancelAfter(ElevatedWorkerInactivityTimeout);
+                        }
+                    }
+                    catch (ObjectDisposedException) { }
+
                     if (frame.StartsWith("LOG:", StringComparison.Ordinal))
                     {
                         string logLine = Encoding.UTF8.GetString(Convert.FromBase64String(frame[4..]));
@@ -1349,7 +1464,10 @@ public static class StorageService
         else if (action is "compact_on" or "compact_off")
         {
             bool enable = action == "compact_on";
-            var (ok, msg) = await SetCompactOsAsync(enable, job.IsEnglish);
+            var (ok, msg) = await SetCompactOsAsync(
+                enable,
+                job.IsEnglish,
+                line => SendFrame("LOG", $"[CompactOS] {line}"));
             SendFrame("LOG", $"[CompactOS] {msg}");
             result = new CleanResult(0, 0, 0, 0, HasErrors: !ok, SummaryMessage: msg);
         }
@@ -1721,48 +1839,60 @@ public static class StorageService
         }
     }
 
-    public static async Task<(bool Success, string Message)> SetCompactOsAsync(bool enable, bool isEn = false)
+    public static async Task<(bool Success, string Message)> SetCompactOsAsync(
+        bool enable,
+        bool isEn = false,
+        Action<string>? logCallback = null,
+        CancellationToken cancellationToken = default)
     {
         if (!IsAdministrator())
         {
             return (false, isEn ? "Administrator privileges required for CompactOS." : "Для настройки CompactOS требуются права администратора.");
         }
 
-        Process? proc = null;
         try
         {
             string compactExe = Path.Combine(Environment.SystemDirectory, "compact.exe");
             string arg = enable ? "/CompactOS:always" : "/CompactOS:never";
-            var psi = new ProcessStartInfo(compactExe, arg)
+            var psi = new ProcessStartInfo(compactExe, arg);
+
+            DateTime lastLogUtc = DateTime.MinValue;
+            var res = await RunProcessWithWatchdogAsync(
+                psi,
+                LongSystemOperationInactivityTimeout,
+                line =>
+                {
+                    if (logCallback == null) return;
+                    DateTime now = DateTime.UtcNow;
+                    if ((now - lastLogUtc).TotalMilliseconds >= 500 || !line.Contains("..."))
+                    {
+                        lastLogUtc = now;
+                        logCallback(line);
+                    }
+                },
+                cancellationToken);
+
+            if (res.Cancelled)
             {
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
-            proc = Process.Start(psi);
-            if (proc == null) return (false, "Failed to start compact.exe");
-            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
-            await proc.WaitForExitAsync(cts.Token);
-            if (proc.ExitCode == 0)
+                return (false, isEn ? "CompactOS operation cancelled by user." : "Операция CompactOS отменена пользователем.");
+            }
+            if (res.TimedOut)
+            {
+                return (false, isEn
+                    ? "CompactOS operation timed out (no progress for 15 minutes)."
+                    : "Операция CompactOS превысила лимит ожидания бездействия (15 минут).");
+            }
+            if (res.ExitCode == 0)
             {
                 return (true, enable
                     ? (isEn ? "CompactOS compression enabled (system files compressed)." : "CompactOS включён (системные файлы сжаты для экономии места).")
                     : (isEn ? "CompactOS compression disabled." : "CompactOS отключён."));
             }
-            return (false, $"compact.exe ExitCode {proc.ExitCode}");
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc?.Kill(entireProcessTree: true); } catch (Exception ex) { Logger.Debug($"compact.exe kill failed: {ex.Message}"); }
-            return (false, isEn ? "CompactOS operation timed out (exceeded 3 minutes)." : "Операция CompactOS превысила лимит ожидания (3 минуты).");
+            return (false, $"compact.exe ExitCode {res.ExitCode}");
         }
         catch (Exception ex)
         {
             return (false, ex.Message);
-        }
-        finally
-        {
-            proc?.Dispose();
         }
     }
 

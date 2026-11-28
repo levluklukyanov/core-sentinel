@@ -23,8 +23,6 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _clockTimer;
     private TelemetryHudWindow? _hudWindow;
     private TrayAndHotkeyService? _trayService;
-    private bool _forceExit = false;
-    private bool _trayHintShown = false;
     private bool _isSamplingTelemetry = false;
     private bool _isRamPurging = false;
     private bool _mcXmxWarned = false;
@@ -211,11 +209,6 @@ public partial class MainWindow : Window
             StatusFooterText.Text = val
                 ? (LocalizationService.IsEnglish ? "Automatic Game Priority enabled." : "Автоматический Game Priority включен.")
                 : (LocalizationService.IsEnglish ? "Automatic Game Priority disabled." : "Автоматический Game Priority выключен.");
-        };
-        ViewSettings.OnMinimizeToTrayChanged += val =>
-        {
-            _settings.MinimizeToTray = val;
-            SaveCurrentUserSettings();
         };
         ViewSettings.OnGlobalHotkeysChanged += val =>
         {
@@ -1953,11 +1946,7 @@ public partial class MainWindow : Window
         Activate();
     }
 
-    private void ExitApplicationFromTray()
-    {
-        _forceExit = true;
-        Close();
-    }
+    private void ExitApplicationFromTray() => Close();
 
     private void CpuMetric_Click(object sender, MouseButtonEventArgs e)
     {
@@ -1991,22 +1980,6 @@ public partial class MainWindow : Window
 
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
-        if (_settings.MinimizeToTray && !_forceExit && IsVisible)
-        {
-            e.Cancel = true;
-            Hide();
-            if (!_trayHintShown)
-            {
-                _trayHintShown = true;
-                bool isEn = LocalizationService.IsEnglish;
-                _trayService?.ShowBalloon(
-                    "CoreSpectre",
-                    isEn
-                        ? "Minimized to system tray. Use Ctrl+Shift+H to toggle HUD or right-click tray icon to exit."
-                        : "Свёрнуто в трей. Ctrl+Shift+H переключает HUD, правый клик по значку — выход.");
-            }
-            return;
-        }
         _modalTcs?.TrySetResult(false);
         base.OnClosing(e);
     }

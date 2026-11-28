@@ -5,7 +5,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" 
              d:DesignHeight="600" d:DesignWidth="800">
-    <Grid>
+    <Grid x:Name="RootGrid">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -203,8 +203,15 @@
                         </Button>
 
                         <!-- CompactOS Button -->
-                        <Button x:Name="BtnCompactOs" Style="{StaticResource BtnPill}" Click="BtnCompactOs_Click" Margin="0,0,0,4" ToolTip="Toggle Windows CompactOS system file compression (saves 2-4 GB on SSD)">
-                            <TextBlock x:Name="BtnCompactOsText" Text="CompactOS: ..." VerticalAlignment="Center"/>
+                        <Button x:Name="BtnCompactOs"
+                                Style="{StaticResource BtnPill}"
+                                Click="BtnCompactOs_Click"
+                                IsEnabled="{Binding CanExecuteCompactOs}"
+                                Margin="0,0,0,4"
+                                ToolTip="Toggle Windows CompactOS system file compression (saves 2-4 GB on SSD)">
+                            <TextBlock x:Name="BtnCompactOsText"
+                                       Text="{Binding CompactOsButtonText}"
+                                       VerticalAlignment="Center"/>
                         </Button>
                     </WrapPanel>
                 </Grid>

@@ -90,7 +90,31 @@ public class UiLoadingTests
                 Assert.Contains("(UTC", clockTb.Text);
                 Assert.Matches(@"^\d{2}:\d{2}:\d{2} (AM|PM) \(UTC[+-]\d+(?::\d{2})?\)$", clockTb.Text);
 
+                // Verify CompactOS Enabling state survives MainWindow.SetLanguage even while Storage tab is collapsed
+                mainWindow.WindowState = WindowState.Normal;
+                mainWindow.Width = 900;
+                mainWindow.Height = 600;
+                mainWindow.ShowActivated = false;
+                mainWindow.ShowInTaskbar = false;
+                mainWindow.Left = -10000;
+                mainWindow.Top = -10000;
+                mainWindow.Show();
+                mainWindow.HighlightTab(2);
+                mainWindow.ViewStorage.CompactOsState = CompactOsState.Enabling;
+                mainWindow.HighlightTab(4);
+                mainWindow.SetLanguage("RU");
+                Assert.Equal(CompactOsState.Enabling, mainWindow.ViewStorage.CompactOsState);
+                Assert.Equal("CompactOS: Включение...", mainWindow.ViewStorage.BtnCompactOsText.Text);
+                Assert.False(mainWindow.ViewStorage.BtnCompactOs.IsEnabled);
+                mainWindow.SetLanguage("EN");
+                Assert.Equal(CompactOsState.Enabling, mainWindow.ViewStorage.CompactOsState);
+                Assert.Equal("CompactOS: Enabling...", mainWindow.ViewStorage.BtnCompactOsText.Text);
+
+                // Verify closing MainWindow actually closes the app instead of minimizing to tray
+                bool wasClosed = false;
+                mainWindow.Closed += (_, _) => wasClosed = true;
                 mainWindow.Close();
+                Assert.True(wasClosed);
             }
             catch (Exception ex)
             {
@@ -111,6 +135,103 @@ public class UiLoadingTests
 
         try
         {
+            SettingsPersistenceService.SettingsPathOverride = null;
+            if (File.Exists(isolatedSettingsPath)) File.Delete(isolatedSettingsPath);
+        }
+        catch { }
+
+        if (failureDetails != null)
+        {
+            Assert.Fail(failureDetails);
+        }
+    }
+
+    [Fact]
+    public void StorageView_CompactOsState_TranslatesOnLanguageSwitchAndBlocksReentry()
+    {
+        string isolatedSettingsPath = Path.Combine(AppContext.BaseDirectory, $"test_settings_{Guid.NewGuid():N}.json");
+        SettingsPersistenceService.SettingsPathOverride = isolatedSettingsPath;
+        string? failureDetails = null;
+
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                if (Application.Current == null)
+                {
+                    var app = new App();
+                    app.InitializeComponent();
+                }
+
+                LocalizationService.CurrentLanguage = "EN";
+                var storageView = new StorageView();
+                var hostWindow = new Window
+                {
+                    Content = storageView,
+                    Width = 900,
+                    Height = 650,
+                    ShowActivated = false,
+                    ShowInTaskbar = false,
+                    WindowStyle = WindowStyle.None,
+                    Left = -10000,
+                    Top = -10000
+                };
+                hostWindow.Show();
+                hostWindow.UpdateLayout();
+
+                storageView.CompactOsState = CompactOsState.Enabling;
+                Assert.False(storageView.CanExecuteCompactOs);
+                Assert.False(storageView.BtnCompactOs.IsEnabled);
+                Assert.Equal("CompactOS: Enabling...", storageView.CompactOsButtonText);
+                Assert.Equal("CompactOS: Enabling...", storageView.BtnCompactOsText.Text);
+
+                // Switching language while Enabling must translate the active state, not reset to Off
+                storageView.ApplyLanguage("RU");
+                Assert.Equal(CompactOsState.Enabling, storageView.CompactOsState);
+                Assert.False(storageView.CanExecuteCompactOs);
+                Assert.False(storageView.BtnCompactOs.IsEnabled);
+                Assert.Equal("CompactOS: Включение...", storageView.CompactOsButtonText);
+                Assert.Equal("CompactOS: Включение...", storageView.BtnCompactOsText.Text);
+
+                storageView.CompactOsState = CompactOsState.Disabling;
+                Assert.False(storageView.CanExecuteCompactOs);
+                Assert.False(storageView.BtnCompactOs.IsEnabled);
+                Assert.Equal("CompactOS: Отключение...", storageView.CompactOsButtonText);
+                Assert.Equal("CompactOS: Отключение...", storageView.BtnCompactOsText.Text);
+
+                storageView.ApplyLanguage("EN");
+                Assert.Equal(CompactOsState.Disabling, storageView.CompactOsState);
+                Assert.Equal("CompactOS: Disabling...", storageView.CompactOsButtonText);
+                Assert.Equal("CompactOS: Disabling...", storageView.BtnCompactOsText.Text);
+
+                storageView.CompactOsState = CompactOsState.On;
+                Assert.True(storageView.CanExecuteCompactOs);
+                Assert.True(storageView.BtnCompactOs.IsEnabled);
+                Assert.Equal("CompactOS: On", storageView.CompactOsButtonText);
+
+                storageView.StopAutoScan();
+                hostWindow.Close();
+            }
+            catch (Exception ex)
+            {
+                var cur = ex;
+                var sb = new System.Text.StringBuilder();
+                while (cur != null)
+                {
+                    sb.AppendLine($"[{cur.GetType().FullName}] {cur.Message}");
+                    cur = cur.InnerException;
+                }
+                failureDetails = sb.ToString();
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        try
+        {
+            LocalizationService.CurrentLanguage = "EN";
             SettingsPersistenceService.SettingsPathOverride = null;
             if (File.Exists(isolatedSettingsPath)) File.Delete(isolatedSettingsPath);
         }

@@ -27,7 +27,6 @@ public partial class SettingsView : UserControl
     private bool _use12HourTime = true;
     private bool _autoRamEnabled = true;
     private bool _autoGamePriorityEnabled = true;
-    private bool _minimizeToTray = true;
     private bool _runAtStartup = false;
     private bool _enableGlobalHotkeys = true;
     private bool _enableThresholdAlerts = true;
@@ -53,7 +52,6 @@ public partial class SettingsView : UserControl
     public event Action<double>? OnRamAlertChanged;
     public event Action<bool>? OnAutoRamChanged;
     public event Action<bool>? OnAutoGamePriorityChanged;
-    public event Action<bool>? OnMinimizeToTrayChanged;
     public event Action<bool>? OnRunAtStartupChanged;
     public event Action<bool>? OnGlobalHotkeysChanged;
     public event Action<bool>? OnThresholdAlertsChanged;
@@ -127,8 +125,6 @@ public partial class SettingsView : UserControl
         TraySectionTitle.Text = isEn ? "TRAY, HOTKEYS & ALERTS" : "ТРЕЙ, ГОРЯЧИЕ КЛАВИШИ И УВЕДОМЛЕНИЯ";
         RunStartupTitle.Text = isEn ? "Run CoreSpectre at Windows Startup" : "Запускать CoreSpectre вместе с Windows";
         RunStartupDesc.Text = isEn ? "Launch minimized to system tray when you sign in to Windows" : "Автозапуск свёрнутым в системный трей при входе в Windows";
-        MinimizeTrayTitle.Text = isEn ? "Minimize to System Tray on Close" : "Сворачивать в трей при закрытии окна";
-        MinimizeTrayDesc.Text = isEn ? "Keep background monitoring and hotkeys active when closing the window" : "Оставляет фоновый мониторинг и горячие клавиши при нажатии крестика";
         HotkeysTitle.Text = isEn ? "Global Hotkeys (Ctrl+Shift+H / L / P)" : "Глобальные клавиши (Ctrl+Shift+H / L / P)";
         HotkeysDesc.Text = isEn ? "H: toggle HUD · L: Click-Through · P: quick RAM Purge" : "H: скрыть/показать HUD · L: Click-Through · P: очистка ОЗУ";
         TrayAlertsTitle.Text = isEn ? "Threshold Tray Notifications" : "Оповещения в системный трей";
@@ -192,7 +188,6 @@ public partial class SettingsView : UserControl
             _use12HourTime = settings.Use12HourTime;
             _autoRamEnabled = settings.AutoRamPurge;
             _autoGamePriorityEnabled = settings.AutoGamePriority;
-            _minimizeToTray = settings.MinimizeToTray;
             _runAtStartup = settings.RunAtStartup;
             _enableGlobalHotkeys = settings.EnableGlobalHotkeys;
             _enableThresholdAlerts = settings.EnableThresholdAlerts;
@@ -252,9 +247,6 @@ public partial class SettingsView : UserControl
 
         TxtRunAtStartupStatus.Text = _runAtStartup ? (isEn ? "Enabled" : "Включено") : (isEn ? "Disabled" : "Выключено");
         BtnToggleRunAtStartup.Style = _runAtStartup ? primaryStyle : pillStyle;
-
-        TxtMinimizeToTrayStatus.Text = _minimizeToTray ? (isEn ? "Enabled" : "Включено") : (isEn ? "Disabled" : "Выключено");
-        BtnToggleMinimizeToTray.Style = _minimizeToTray ? primaryStyle : pillStyle;
 
         TxtGlobalHotkeysStatus.Text = _enableGlobalHotkeys ? (isEn ? "Enabled" : "Включено") : (isEn ? "Disabled" : "Выключено");
         BtnToggleGlobalHotkeys.Style = _enableGlobalHotkeys ? primaryStyle : pillStyle;
@@ -1084,13 +1076,6 @@ public partial class SettingsView : UserControl
         _runAtStartup = !_runAtStartup;
         UpdateToggleButtonStyles();
         OnRunAtStartupChanged?.Invoke(_runAtStartup);
-    }
-
-    private void BtnToggleMinimizeToTray_Click(object sender, RoutedEventArgs e)
-    {
-        _minimizeToTray = !_minimizeToTray;
-        UpdateToggleButtonStyles();
-        OnMinimizeToTrayChanged?.Invoke(_minimizeToTray);
     }
 
     private void BtnToggleGlobalHotkeys_Click(object sender, RoutedEventArgs e)
